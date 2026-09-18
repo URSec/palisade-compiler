@@ -3516,6 +3516,10 @@ def fms_define_stdc : Flag<["-"], "fms-define-stdc">, Group<f_Group>,
   Visibility<[ClangOption, CC1Option, CLOption]>,
   HelpText<"Define '__STDC__' to '1' in MSVC Compatibility mode">,
   MarshallingInfoFlag<LangOpts<"MSVCEnableStdcMacro">>;
+def fpalisade : Flag<["-"], "fpalisade">, Group<f_Group>,
+  Visibility<[ClangOption, CC1Option]>,
+  HelpText<"Enable the experimental Palisade-C protected storage qualifier">,
+  MarshallingInfoFlag<LangOpts<"Palisade">>;
 def fms_extensions : Flag<["-"], "fms-extensions">, Group<f_Group>,
   Visibility<[ClangOption, CC1Option, CLOption]>,
   HelpText<"Accept some non-standard constructs supported by the Microsoft compiler">,

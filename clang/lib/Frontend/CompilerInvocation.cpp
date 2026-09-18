@@ -4021,6 +4021,18 @@ bool CompilerInvocation::ParseLangArgs(LangOptions &Opts, ArgList &Args,
                                        DiagnosticsEngine &Diags) {
   unsigned NumErrorsBefore = Diags.getNumErrors();
 
+  if (Args.hasArg(OPT_fpalisade)) {
+    // palisade only works for C
+    if (IK.getLanguage() != Language::C)
+      Diags.Report(diag::err_drv_argument_not_allowed_with)
+          << "-fpalisade" << GetInputKindName(IK);
+    // palisade only allow ARM 32
+    // but also allow X86 for testing/cross-compile at host
+    if (!T.isARM() && !T.isThumb() && !T.isX86())
+      Diags.Report(diag::err_drv_unsupported_opt_for_target)
+          << "-fpalisade" << T.str();
+  }
+
   if (IK.getFormat() == InputKind::Precompiled ||
       IK.getLanguage() == Language::LLVM_IR ||
       IK.getLanguage() == Language::CIR) {

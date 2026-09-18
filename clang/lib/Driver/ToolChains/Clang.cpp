@@ -7732,6 +7732,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back(LanguageStandard.data());
   }
 
+  Args.AddLastArg(CmdArgs, options::OPT_fpalisade);
   Args.addOptInFlag(CmdArgs, options::OPT_fborland_extensions,
                     options::OPT_fno_borland_extensions);
 

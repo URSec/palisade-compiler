@@ -1,5 +1,11 @@
 ==============================================================================
-The LLVM Project is under the Apache License v2.0 with LLVM Exceptions:
+the palisade project is under apache license v2.0.
+
+you may also include the llvm exceptions.
+==============================================================================
+
+==============================================================================
+the llvm project is under the apache license v2.0 with llvm exceptions:
 ==============================================================================
 
                                  Apache License

@@ -5244,6 +5244,18 @@ space are allowed. Local address space variables cannot have an initializer.
   }];
 }
 
+def PalisadeProtectedDocs : Documentation {
+  let Category = DocCatType;
+  let Content = [{
+An experimental Palisade C extension that enables qualifier ``__protected``
+under ``-fpalisade``. The qualifier specifies that an object is allocated under
+a different logical storage domain that is segregated from ordinary memory
+space. It allows compiler to identify and isolate objects with this qualifier,
+and instructments programs for runtime validation to maintain such security
+invariant.
+  }];
+}
+
 def OpenCLAddressSpacePrivateDocs : Documentation {
   let Category = DocOpenCLAddressSpaces;
   let Heading = "__private, private, [[clang::opencl_private]]";

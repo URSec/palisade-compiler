@@ -301,6 +301,7 @@ PUNCTUATOR(greatergreatergreater, ">>>")
 //   KEYFIXEDPOINT - This is a keyword according to the N1169 fixed point
 //                   extension.
 //   KEYDEFERTS - This is a keyword if the C '_Defer' TS is enabled
+//   KEYPALISADE - This is a keyword if Palisade is enabled
 //   KEYZOS - This is a keyword in C/C++ on z/OS
 //
 KEYWORD(auto                        , KEYALL)
@@ -673,6 +674,9 @@ KEYWORD(addrspace_cast              , KEYOPENCLCXX)
 
 // CUDA/HIP function attributes
 KEYWORD(__noinline__                , KEYCUDA)
+
+// Palisade storage qualifier.
+KEYWORD(__protected                 , KEYPALISADE)
 
 // HLSL keywords.
 KEYWORD(cbuffer                     , KEYHLSL)

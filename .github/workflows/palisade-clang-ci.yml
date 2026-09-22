@@ -1,0 +1,125 @@
+name: Palisade Clang CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    name: Clang (Linux, X86)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    defaults:
+      run:
+        shell: bash
+    env:
+      BUILD_DIR: ${{ github.workspace }}/build-ci
+      LOG_DIR: ${{ github.workspace }}/build-ci/ci-logs
+      JOBS: '4'
+      LINK_JOBS: '1'
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_MAXSIZE: 2G
+      CCACHE_COMPILERCHECK: content
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            .github
+            clang
+            cmake
+            libc/hdr
+            libc/include
+            libc/shared
+            libc/src/__support
+            libunwind/include
+            llvm
+            third-party
+
+      - name: Prepare logs
+        run: mkdir -p "$LOG_DIR"
+
+      - name: Install build dependencies
+        id: dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            clang-18 lld-18 cmake ninja-build python3 ccache
+
+      - name: Restore compiler cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ${{ runner.os }}-palisade-clang18-x86-v1-${{ hashFiles('.github/workflows/palisade-clang-ci.yml') }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-palisade-clang18-x86-v1-${{ hashFiles('.github/workflows/palisade-clang-ci.yml') }}-
+
+      - name: Configure Clang
+        run: |
+          ccache --zero-stats
+          cmake -S llvm -B "$BUILD_DIR" -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER=clang-18 \
+            -DCMAKE_CXX_COMPILER=clang++-18 \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DLLVM_ENABLE_PROJECTS=clang \
+            -DLLVM_ENABLE_RUNTIMES= \
+            -DLLVM_TARGETS_TO_BUILD=X86 \
+            -DLLVM_DEFAULT_TARGET_TRIPLE=x86_64-unknown-linux-gnu \
+            -DLLVM_ENABLE_ASSERTIONS=ON \
+            -DLLVM_INCLUDE_TESTS=ON \
+            -DLLVM_BUILD_TESTS=OFF \
+            -DLLVM_INCLUDE_BENCHMARKS=OFF \
+            -DLLVM_INCLUDE_EXAMPLES=OFF \
+            -DLLVM_INCLUDE_DOCS=OFF \
+            -DLLVM_PARALLEL_LINK_JOBS="$LINK_JOBS" \
+            -DLLVM_USE_LINKER=lld-18 \
+            "-DLLVM_LIT_ARGS=-sv -j $JOBS --xunit-xml-output=$LOG_DIR/check-clang.xml" \
+            2>&1 | tee "$LOG_DIR/configure.log"
+
+      - name: Build Clang and test dependencies
+        id: test_deps
+        run: |
+          cmake --build "$BUILD_DIR" --parallel "$JOBS" --target clang-test-depends \
+            2>&1 | tee "$LOG_DIR/test-dependencies.log"
+
+      - name: Run Palisade regression tests
+        run: |
+          "$BUILD_DIR/bin/llvm-lit" -sv -j "$JOBS" --filter '[Pp]alisade' \
+            --xunit-xml-output="$LOG_DIR/palisade.xml" "$BUILD_DIR/tools/clang/test" \
+            2>&1 | tee "$LOG_DIR/palisade.log"
+
+      - name: Run full Clang regression and unit tests
+        if: ${{ !cancelled() && steps.test_deps.outcome == 'success' }}
+        run: |
+          cmake --build "$BUILD_DIR" --parallel "$JOBS" --target check-clang \
+            2>&1 | tee "$LOG_DIR/check-clang.log"
+
+      - name: Show compiler cache statistics
+        if: ${{ always() && steps.dependencies.outcome == 'success' }}
+        run: ccache --show-stats
+
+      - name: Upload build and test reports
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: palisade-frontend-reports
+          path: |
+            ${{ env.LOG_DIR }}/
+            ${{ env.BUILD_DIR }}/CMakeCache.txt
+            ${{ env.BUILD_DIR }}/CMakeFiles/CMakeConfigureLog.yaml
+          retention-days: 7
+          if-no-files-found: warn

@@ -2025,6 +2025,7 @@ void TypePrinter::printAttributedAfter(const AttributedType *T,
   case attr::OpenCLLocalAddressSpace:
   case attr::OpenCLConstantAddressSpace:
   case attr::OpenCLGenericAddressSpace:
+  case attr::PalisadeProtected:
   case attr::HLSLGroupSharedAddressSpace:
     // FIXME: Update printAttributedBefore to print these once we generate
     // AttributedType nodes for them.
@@ -2748,6 +2749,8 @@ std::string Qualifiers::getAddrSpaceAsString(LangAS AS) {
     return "hlsl_push_constant";
   case LangAS::wasm_funcref:
     return "__funcref";
+  case LangAS::palisade_protected:
+    return "__protected";
   default:
     return std::to_string(toTargetAddressSpace(AS));
   }

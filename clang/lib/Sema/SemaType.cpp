@@ -6687,10 +6687,13 @@ static void HandleAddressSpaceTypeAttribute(QualType &Type,
       Attr.setInvalid();
   } else {
     // The keyword-based type attributes imply which address space to use.
-    ASIdx = S.getLangOpts().SYCLIsDevice ? Attr.asSYCLLangAS()
-                                         : Attr.asOpenCLLangAS();
-    if (S.getLangOpts().HLSL)
+    if (Attr.getKind() == ParsedAttr::AT_PalisadeProtected)
+      ASIdx = LangAS::palisade_protected;
+    else if (S.getLangOpts().HLSL)
       ASIdx = Attr.asHLSLLangAS();
+    else
+      ASIdx = S.getLangOpts().SYCLIsDevice ? Attr.asSYCLLangAS()
+                                           : Attr.asOpenCLLangAS();
 
     if (ASIdx == LangAS::Default)
       llvm_unreachable("Invalid address space");
@@ -9110,6 +9113,7 @@ static void processTypeAttrs(TypeProcessingState &state, QualType &type,
     case ParsedAttr::AT_OpenCLLocalAddressSpace:
     case ParsedAttr::AT_OpenCLConstantAddressSpace:
     case ParsedAttr::AT_OpenCLGenericAddressSpace:
+    case ParsedAttr::AT_PalisadeProtected:
     case ParsedAttr::AT_AddressSpace:
       HandleAddressSpaceTypeAttribute(type, attr, state);
       attr.setUsedAsTypeAttr();

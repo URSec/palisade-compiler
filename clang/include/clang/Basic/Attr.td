@@ -1814,6 +1814,13 @@ def OpenCLAccess : Attr {
   let Documentation = [OpenCLAccessDocs];
 }
 
+// An IgnoredAttr used as a placeholder for palisade project
+// Used now for parser
+def PalisadeProtected : IgnoredAttr {
+  let Spellings = [CustomKeyword<"__protected">];
+  let Documentation = [PalisadeProtectedDocs];
+}
+
 def OpenCLPrivateAddressSpace : TypeAttr {
   let Spellings = [CustomKeyword<"__private">, CustomKeyword<"private">,
                    Clang<"opencl_private">];

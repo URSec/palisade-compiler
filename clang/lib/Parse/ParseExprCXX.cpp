@@ -1404,7 +1404,7 @@ ExprResult Parser::ParseLambdaExpressionAfterIntroducer(
     // Parse OpenCL addr space attribute.
     if (Tok.isOneOf(tok::kw___private, tok::kw___global, tok::kw___local,
                     tok::kw___constant, tok::kw___generic)) {
-      ParseOpenCLQualifiers(DS.getAttributes());
+      ParseTypeQualifierAttribute(DS.getAttributes());
       ConsumeToken();
     }
 

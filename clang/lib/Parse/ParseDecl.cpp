@@ -1085,7 +1085,7 @@ void Parser::ParseCUDAFunctionAttributes(ParsedAttributes &attrs) {
   }
 }
 
-void Parser::ParseOpenCLQualifiers(ParsedAttributes &Attrs) {
+void Parser::ParseTypeQualifierAttribute(ParsedAttributes &Attrs) {
   IdentifierInfo *AttrName = Tok.getIdentifierInfo();
   SourceLocation AttrNameLoc = Tok.getLocation();
   Attrs.addNew(AttrName, AttrNameLoc, AttributeScopeInfo(), nullptr, 0,
@@ -4628,6 +4628,11 @@ void Parser::ParseDeclarationSpecifiers(
                                  getLangOpts());
       break;
 
+    // Palisade qualifier syntax.
+    case tok::kw___protected:
+      ParseTypeQualifierAttribute(DS.getAttributes());
+      break;
+
     // OpenCL address space qualifiers:
     case tok::kw___generic:
       // generic address space is introduced only in OpenCL v2.0
@@ -4655,7 +4660,7 @@ void Parser::ParseDeclarationSpecifiers(
     case tok::kw___read_only:
     case tok::kw___write_only:
     case tok::kw___read_write:
-      ParseOpenCLQualifiers(DS.getAttributes());
+      ParseTypeQualifierAttribute(DS.getAttributes());
       break;
     case tok::kw_row_major:
     case tok::kw_column_major:
@@ -5759,6 +5764,7 @@ bool Parser::isTypeSpecifierQualifier(const Token &Tok) {
 
   case tok::kw___kindof:
 
+  case tok::kw___protected:
   case tok::kw___private:
   case tok::kw___local:
   case tok::kw___global:
@@ -6045,6 +6051,7 @@ bool Parser::isDeclarationSpecifier(
 
   case tok::kw___kindof:
 
+  case tok::kw___protected:
   case tok::kw___private:
   case tok::kw___local:
   case tok::kw___global:
@@ -6288,6 +6295,11 @@ void Parser::ParseTypeQualifierListOpt(
                                  getLangOpts());
       break;
 
+    // Palisade qualifier syntax at this pointer level.
+    case tok::kw___protected:
+      ParseTypeQualifierAttribute(DS.getAttributes());
+      break;
+
     // OpenCL qualifiers:
     case tok::kw_private:
       if (!getLangOpts().OpenCL)
@@ -6301,7 +6313,7 @@ void Parser::ParseTypeQualifierListOpt(
     case tok::kw___read_only:
     case tok::kw___write_only:
     case tok::kw___read_write:
-      ParseOpenCLQualifiers(DS.getAttributes());
+      ParseTypeQualifierAttribute(DS.getAttributes());
       break;
 
     case tok::kw_groupshared:

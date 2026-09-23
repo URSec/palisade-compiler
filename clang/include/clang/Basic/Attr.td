@@ -1814,9 +1814,7 @@ def OpenCLAccess : Attr {
   let Documentation = [OpenCLAccessDocs];
 }
 
-// An IgnoredAttr used as a placeholder for palisade project
-// Used now for parser
-def PalisadeProtected : IgnoredAttr {
+def PalisadeProtected : TypeAttr {
   let Spellings = [CustomKeyword<"__protected">];
   let Documentation = [PalisadeProtectedDocs];
 }

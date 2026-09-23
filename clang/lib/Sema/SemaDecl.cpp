@@ -8953,7 +8953,8 @@ void Sema::CheckVariableDeclarationType(VarDecl *NewVD) {
   // automatic variables that point to other address spaces.
   // ISO/IEC TR 18037 S5.1.2
   if (!getLangOpts().OpenCL && NewVD->hasLocalStorage() &&
-      T.getAddressSpace() != LangAS::Default) {
+      T.getAddressSpace() != LangAS::Default &&
+      T.getAddressSpace() != LangAS::palisade_protected) {
     Diag(NewVD->getLocation(), diag::err_as_qualified_auto_decl) << 0;
     NewVD->setInvalidDecl();
     return;
@@ -16007,6 +16008,8 @@ ParmVarDecl *Sema::CheckParameter(DeclContext *DC, SourceLocation StartLoc,
   // Since all parameters have automatic store duration, they can not have
   // an address space.
   if (T.getAddressSpace() != LangAS::Default &&
+      // Palisade represents protected parameter storage in the type system.
+      T.getAddressSpace() != LangAS::palisade_protected &&
       // OpenCL allows function arguments declared to be an array of a type
       // to be qualified with an address space.
       !(getLangOpts().OpenCL &&

@@ -2481,6 +2481,9 @@ void MicrosoftCXXNameMangler::mangleAddressSpaceType(QualType T,
     switch (AS) {
     default:
       llvm_unreachable("Not a language specific address space");
+    case LangAS::palisade_protected:
+      Extra.mangleSourceName("_AS__protected");
+      break;
     case LangAS::opencl_global:
       Extra.mangleSourceName("_ASCLglobal");
       break;

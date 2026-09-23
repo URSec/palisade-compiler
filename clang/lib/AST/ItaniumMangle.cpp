@@ -2803,6 +2803,9 @@ void CXXNameMangler::mangleQualifiers(Qualifiers Quals, const DependentAddressSp
     } else {
       switch (AS) {
       default: llvm_unreachable("Not a language specific address space");
+      case LangAS::palisade_protected:
+        ASString = "__protected";
+        break;
       //  <OpenCL-addrspace> ::= "CL" [ "global" | "local" | "constant" |
       //                                "private"| "generic" | "device" |
       //                                "host" ]

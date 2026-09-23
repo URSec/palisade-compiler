@@ -2,10 +2,6 @@
 // RUN: %clang_cc1 -triple x86_64-unknown-linux-gnu -fpalisade -std=c11 -fsyntax-only -verify %s
 // expected-no-diagnostics
 
-// Syntax coverage only without semantics
-// The type semantics for parsed __protected can be wrong here
-// Check every declarator position where a qualifier can legally appear
-
 // Pointer declarations
 int *p;
 __protected int *q;
@@ -14,6 +10,9 @@ __protected int *__protected t;
 __protected int **nested;
 int *__protected *slot_pointer;
 
+// Multiple declarators
+__protected int scalar, *pointer;
+int *__protected slot, **ordinary_pointer;
 
 // Type definitions
 typedef __protected int protected_int;
@@ -35,8 +34,8 @@ function_type *__protected callback_typedef;
 struct record {
   int value;
   __protected int *pointer;
-  __protected int field;
-  int *__protected pointer_field;
+  int field;
+  int *pointer_field;
 };
 __protected struct record aggregate;
 
@@ -44,7 +43,6 @@ __protected struct record aggregate;
 protected_ptr identity(__protected int *value) { return value; }
 void array_parameter(__protected int values[4]);
 void typedef_array_parameter(protected_array values);
-
 
 // Locals, array, VLA
 void locals(int count) {
@@ -60,6 +58,7 @@ void locals(int count) {
 
   // Abstract declarators, casts, compound literals, and a for-loop declaration.
   (void)sizeof(__protected int *);
+  (void)sizeof(int *__protected *);
   pointer = (__protected int *)pointer;
   pointer = &(__protected int){3};
   pointer = (__protected int[2]){4, 5};

@@ -21,6 +21,37 @@
 using namespace clang;
 using namespace clang::targets;
 
+static const LangASMap ARMAddrSpaceMap = {
+    0,   // Default
+    0,   // opencl_global
+    0,   // opencl_local
+    0,   // opencl_constant
+    0,   // opencl_private
+    0,   // opencl_generic
+    0,   // opencl_global_device
+    0,   // opencl_global_host
+    0,   // cuda_device
+    0,   // cuda_constant
+    0,   // cuda_shared
+    0,   // sycl_global
+    0,   // sycl_global_device
+    0,   // sycl_global_host
+    0,   // sycl_local
+    0,   // sycl_private
+    0,   // ptr32_sptr
+    0,   // ptr32_uptr
+    0,   // ptr64
+    0,   // hlsl_groupshared
+    0,   // hlsl_constant
+    0,   // hlsl_private
+    0,   // hlsl_device
+    0,   // hlsl_input
+    0,   // hlsl_output
+    0,   // hlsl_push_constant
+    0,   // wasm_funcref
+    200, // palisade_protected: logical storage, lowered by Palisade passes
+};
+
 void ARMTargetInfo::setABIAAPCS() {
   IsAAPCS = true;
 
@@ -224,6 +255,7 @@ ARMTargetInfo::ARMTargetInfo(const llvm::Triple &Triple,
                              const TargetOptions &Opts)
     : TargetInfo(Triple), FPMath(FP_Default), IsAAPCS(true), LDREX(0),
       HW_FP(0) {
+  AddrSpaceMap = &ARMAddrSpaceMap;
   bool IsFreeBSD = Triple.isOSFreeBSD();
   bool IsFuchsia = Triple.isOSFuchsia();
   bool IsOpenBSD = Triple.isOSOpenBSD();

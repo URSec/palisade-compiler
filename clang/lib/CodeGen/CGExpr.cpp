@@ -105,16 +105,15 @@ static llvm::StringRef GetUBSanTrapForHandler(SanitizerHandler ID) {
 
 /// CreateTempAlloca - This creates a alloca and inserts it into the entry
 /// block.
-RawAddress
-CodeGenFunction::CreateTempAllocaWithoutCast(llvm::Type *Ty, CharUnits Align,
-                                             const Twine &Name,
-                                             llvm::Value *ArraySize) {
+RawAddress CodeGenFunction::CreateTempAllocaWithoutCast(
+    llvm::Type *Ty, CharUnits Align, const Twine &Name, llvm::Value *ArraySize,
+    std::optional<unsigned> AddressSpace) {
   if (getLangOpts().EmitLogicalPointer) {
     auto Alloca = Builder.CreateStructuredAlloca(Ty, Name);
     return RawAddress(Alloca, Ty, Align, KnownNonNull);
   }
 
-  auto *Alloca = CreateTempAlloca(Ty, Name, ArraySize);
+  auto *Alloca = CreateTempAlloca(Ty, Name, ArraySize, AddressSpace);
   Alloca->setAlignment(Align.getAsAlign());
   return RawAddress(Alloca, Ty, Align, KnownNonNull);
 }
@@ -148,7 +147,11 @@ RawAddress CodeGenFunction::CreateTempAlloca(llvm::Type *Ty, LangAS DestLangAS,
                                              CharUnits Align, const Twine &Name,
                                              llvm::Value *ArraySize,
                                              RawAddress *AllocaAddr) {
-  RawAddress Alloca = CreateTempAllocaWithoutCast(Ty, Align, Name, ArraySize);
+  std::optional<unsigned> AllocaAS;
+  if (DestLangAS == LangAS::palisade_protected)
+    AllocaAS = getContext().getTargetAddressSpace(DestLangAS);
+  RawAddress Alloca =
+      CreateTempAllocaWithoutCast(Ty, Align, Name, ArraySize, AllocaAS);
   if (AllocaAddr)
     *AllocaAddr = Alloca;
   return MaybeCastStackAddressSpace(Alloca, DestLangAS, ArraySize);
@@ -157,16 +160,17 @@ RawAddress CodeGenFunction::CreateTempAlloca(llvm::Type *Ty, LangAS DestLangAS,
 /// CreateTempAlloca - This creates an alloca and inserts it into the entry
 /// block if \p ArraySize is nullptr, otherwise inserts it at the current
 /// insertion point of the builder.
-llvm::AllocaInst *CodeGenFunction::CreateTempAlloca(llvm::Type *Ty,
-                                                    const Twine &Name,
-                                                    llvm::Value *ArraySize) {
+llvm::AllocaInst *
+CodeGenFunction::CreateTempAlloca(llvm::Type *Ty, const Twine &Name,
+                                  llvm::Value *ArraySize,
+                                  std::optional<unsigned> AS) {
+  unsigned AllocaAS = AS.value_or(CGM.getDataLayout().getAllocaAddrSpace());
   llvm::AllocaInst *Alloca;
   if (ArraySize)
-    Alloca = Builder.CreateAlloca(Ty, ArraySize, Name);
+    Alloca = Builder.CreateAlloca(Ty, AllocaAS, ArraySize, Name);
   else
-    Alloca =
-        new llvm::AllocaInst(Ty, CGM.getDataLayout().getAllocaAddrSpace(),
-                             ArraySize, Name, AllocaInsertPt->getIterator());
+    Alloca = new llvm::AllocaInst(Ty, AllocaAS, ArraySize, Name,
+                                  AllocaInsertPt->getIterator());
   if (SanOpts.Mask & SanitizerKind::Address) {
     Alloca->addAnnotationMetadata({"alloca_name_altered", Name.str()});
   }
@@ -226,6 +230,8 @@ RawAddress CodeGenFunction::CreateMemTemp(QualType Ty, CharUnits Align,
 RawAddress CodeGenFunction::CreateMemTempWithoutCast(QualType Ty,
                                                      CharUnits Align,
                                                      const Twine &Name) {
+  if (Ty.getAddressSpace() == LangAS::palisade_protected)
+    return CreateMemTemp(Ty, Align, Name);
   return CreateTempAllocaWithoutCast(ConvertTypeForMem(Ty), Align, Name);
 }
 

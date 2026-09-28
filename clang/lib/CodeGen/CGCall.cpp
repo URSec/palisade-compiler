@@ -3487,7 +3487,14 @@ void CodeGenFunction::EmitFunctionProlog(const CGFunctionInfo &FI,
         // need to do is realign the value, if requested. Also, if the address
         // may be aliased, copy it to ensure that the parameter variable is
         // mutable and has a unique adress, as C requires.
-        if (ArgI.getIndirectRealign() || ArgI.isIndirectAliased()) {
+        // A protected parameter needs its own protected storage even when the
+        // ABI supplies an ordinary by-value argument address.
+        bool NeedsProtectedCopy =
+            Ty.getAddressSpace() == LangAS::palisade_protected &&
+            ParamAddr.getAddressSpace() !=
+                getContext().getTargetAddressSpace(Ty.getAddressSpace());
+        if (ArgI.getIndirectRealign() || ArgI.isIndirectAliased() ||
+            NeedsProtectedCopy) {
           RawAddress AlignedTemp = CreateMemTempWithoutCast(Ty, "coerce");
 
           // Copy from the incoming argument pointer to the temporary with the

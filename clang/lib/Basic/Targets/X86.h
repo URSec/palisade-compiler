@@ -54,8 +54,8 @@ static const unsigned X86AddrSpaceMap[] = {
     0,   // hlsl_push_constant
     // Wasm address space values for this target are dummy values,
     // as it is only enabled for Wasm targets.
-    20, // wasm_funcref
-    0,  // palisade_protected
+    20,  // wasm_funcref
+    200, // palisade_protected for ARM, but testing in host IR
 };
 
 // X86 target abstract base class; x86-32 and x86-64 are very close, so

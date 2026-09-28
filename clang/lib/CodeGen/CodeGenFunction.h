@@ -2874,6 +2874,7 @@ public:
   ///
   /// \p ArraySize is the number of array elements to be allocated if it
   ///    is not nullptr.
+  /// \p AddressSpace overrides the target's default alloca address space.
   ///
   /// LangAS::Default is the address space of pointers to local variables and
   /// temporaries, as exposed in the source language. In certain
@@ -2893,11 +2894,13 @@ public:
   /// The cast is not performed in CreateTempAllocaWithoutCast. This is
   /// more efficient if the caller knows that the address will not be exposed.
   llvm::AllocaInst *CreateTempAlloca(llvm::Type *Ty, const Twine &Name = "tmp",
-                                     llvm::Value *ArraySize = nullptr);
+                                     llvm::Value *ArraySize = nullptr,
+                                     std::optional<unsigned> AddressSpace = {});
 
   /// CreateTempAlloca - This creates a alloca and inserts it into the entry
   /// block. The alloca is casted to the address space of \p UseAddrSpace if
-  /// necessary.
+  /// necessary. Palisade protected objects are allocated directly in their
+  /// address space so that later passes can identify their storage domain.
   RawAddress CreateTempAlloca(llvm::Type *Ty, LangAS UseAddrSpace,
                               CharUnits align, const Twine &Name = "tmp",
                               llvm::Value *ArraySize = nullptr,
@@ -2916,9 +2919,11 @@ public:
                             Alloca);
   }
 
-  RawAddress CreateTempAllocaWithoutCast(llvm::Type *Ty, CharUnits align,
-                                         const Twine &Name = "tmp",
-                                         llvm::Value *ArraySize = nullptr);
+  RawAddress
+  CreateTempAllocaWithoutCast(llvm::Type *Ty, CharUnits align,
+                              const Twine &Name = "tmp",
+                              llvm::Value *ArraySize = nullptr,
+                              std::optional<unsigned> AddressSpace = {});
 
   /// CreateDefaultAlignedTempAlloca - This creates an alloca with the
   /// default ABI alignment of the given LLVM type.

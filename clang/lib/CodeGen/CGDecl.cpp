@@ -1359,16 +1359,28 @@ void CodeGenFunction::EmitAutoVarDecl(const VarDecl &D) {
   EmitAutoVarCleanups(emission);
 }
 
+/// Whether \p Addr is in an address space that allocas are created in: the
+/// target's alloca address space, or Palisade's protected storage.
+[[maybe_unused]] static bool isAllocaAddrSpace(CodeGenModule &CGM,
+                                               llvm::Value *Addr) {
+  unsigned AS = Addr->getType()->getPointerAddressSpace();
+  return AS == CGM.getDataLayout().getAllocaAddrSpace() ||
+         (CGM.getLangOpts().Palisade &&
+          AS == CGM.getContext().getTargetAddressSpace(
+                    LangAS::palisade_protected));
+}
+
 /// Emit a lifetime.begin marker if some criteria are satisfied.
 /// \return whether the marker was emitted.
 bool CodeGenFunction::EmitLifetimeStart(llvm::Value *Addr) {
   if (!ShouldEmitLifetimeMarkers)
     return false;
 
-  assert(Addr->getType()->getPointerAddressSpace() ==
-             CGM.getDataLayout().getAllocaAddrSpace() &&
+  assert(isAllocaAddrSpace(CGM, Addr) &&
          "Pointer should be in alloca address space");
-  llvm::CallInst *C = Builder.CreateCall(CGM.getLLVMLifetimeStartFn(), {Addr});
+  // The intrinsic is overloaded on the pointer type, so this also covers
+  // protected allocas outside the target's alloca address space.
+  llvm::CallInst *C = Builder.CreateLifetimeStart(Addr);
   C->setDoesNotThrow();
   return true;
 }
@@ -1377,10 +1389,9 @@ void CodeGenFunction::EmitLifetimeEnd(llvm::Value *Addr) {
   if (!ShouldEmitLifetimeMarkers)
     return;
 
-  assert(Addr->getType()->getPointerAddressSpace() ==
-             CGM.getDataLayout().getAllocaAddrSpace() &&
+  assert(isAllocaAddrSpace(CGM, Addr) &&
          "Pointer should be in alloca address space");
-  llvm::CallInst *C = Builder.CreateCall(CGM.getLLVMLifetimeEndFn(), {Addr});
+  llvm::CallInst *C = Builder.CreateLifetimeEnd(Addr);
   C->setDoesNotThrow();
 }
 
@@ -1491,6 +1502,7 @@ CodeGenFunction::EmitAutoVarAlloca(const VarDecl &D) {
   QualType Ty = D.getType();
   assert(
       Ty.getAddressSpace() == LangAS::Default ||
+      Ty.getAddressSpace() == LangAS::palisade_protected ||
       (Ty.getAddressSpace() == LangAS::opencl_private && getLangOpts().OpenCL));
 
   AutoVarEmission emission(D);
@@ -1711,8 +1723,8 @@ CodeGenFunction::EmitAutoVarAlloca(const VarDecl &D) {
       llvm::Type *llvmTy = ConvertTypeForMem(VlaSize.Type);
 
       // Allocate memory for the array.
-      address = CreateTempAlloca(llvmTy, alignment, "vla", VlaSize.NumElts,
-                                 &AllocaAddr);
+      address = CreateTempAlloca(llvmTy, Ty.getAddressSpace(), alignment, "vla",
+                                 VlaSize.NumElts, &AllocaAddr);
     }
 
     // If we have debug info enabled, properly describe the VLA dimensions for
@@ -2691,7 +2703,8 @@ void CodeGenFunction::EmitParmDecl(const VarDecl &D, ParamValue Arg,
     Arg.getAnyValue()->setName(D.getName());
 
   QualType Ty = D.getType();
-  assert((getLangOpts().OpenCL || Ty.getAddressSpace() == LangAS::Default) &&
+  assert((getLangOpts().OpenCL || Ty.getAddressSpace() == LangAS::Default ||
+          Ty.getAddressSpace() == LangAS::palisade_protected) &&
          "parameter has non-default address space in non-OpenCL mode");
 
   // Use better IR generation for certain implicit parameters.

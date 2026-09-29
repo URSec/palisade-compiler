@@ -1530,7 +1530,10 @@ CodeGenFunction::EmitAutoVarAlloca(const VarDecl &D) {
             ? CGM.getOpenMPRuntime().getAddressOfLocalVariable(*this, &D)
             : Address::invalid();
 
-  bool NRVO = getLangOpts().ElideConstructors && D.isNRVOVariable();
+  // Return slots use ordinary storage on Palisade's supported targets, so
+  // protected locals need separate storage and a copy on return.
+  bool NRVO = getLangOpts().ElideConstructors && D.isNRVOVariable() &&
+              Ty.getAddressSpace() != LangAS::palisade_protected;
 
   if (getLangOpts().OpenMP && OpenMPLocalAddr.isValid()) {
     address = OpenMPLocalAddr;

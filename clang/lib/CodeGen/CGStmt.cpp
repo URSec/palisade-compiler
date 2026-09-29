@@ -1650,9 +1650,12 @@ void CodeGenFunction::EmitReturnStmt(const ReturnStmt &S) {
 
   // FIXME: Clean this up by using an LValue for ReturnTemp,
   // EmitStoreThroughLValue, and EmitAnyExpr.
+  // Protected locals need a copy into the ordinary return slot.
   // Check if the NRVO candidate was not globalized in OpenMP mode.
   if (getLangOpts().ElideConstructors && S.getNRVOCandidate() &&
       S.getNRVOCandidate()->isNRVOVariable() &&
+      S.getNRVOCandidate()->getType().getAddressSpace() !=
+          LangAS::palisade_protected &&
       (!getLangOpts().OpenMP ||
        !CGM.getOpenMPRuntime()
             .getAddressOfLocalVariable(*this, S.getNRVOCandidate())

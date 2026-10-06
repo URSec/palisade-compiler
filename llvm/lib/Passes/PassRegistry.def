@@ -135,6 +135,7 @@ MODULE_PASS("nsan", NumericalStabilitySanitizerPass())
 MODULE_PASS("openmp-opt", OpenMPOptPass())
 MODULE_PASS("openmp-opt-postlink",
             OpenMPOptPass(ThinOrFullLTOPhase::FullLTOPostLink))
+MODULE_PASS("palisade-global-segregation", PalisadeGlobalSegregationPass())
 MODULE_PASS("partial-inliner", PartialInlinerPass())
 MODULE_PASS("pgo-icall-prom", PGOIndirectCallPromotion())
 MODULE_PASS("pgo-instr-gen", PGOInstrumentationGen())

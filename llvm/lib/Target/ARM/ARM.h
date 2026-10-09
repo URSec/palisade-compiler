@@ -55,6 +55,9 @@ createARMInstructionSelector(const ARMBaseTargetMachine &TM, const ARMSubtarget 
                              const ARMRegisterBankInfo &RBI);
 Pass *createMVEGatherScatterLoweringPass();
 FunctionPass *createARMSLSHardeningPass();
+FunctionPass *createARMPalisadeStoreHardeningPass();
+bool isARMPalisadeStoreHardeningEnabled();
+void reservePalisadeSpillSlots(MachineFunction &MF);
 FunctionPass *createARMIndirectThunks();
 Pass *createMVELaneInterleavingPass();
 FunctionPass *createARMFixCortexA57AES1742098Pass();
@@ -74,6 +77,7 @@ void initializeARMLowOverheadLoopsPass(PassRegistry &);
 void initializeARMParallelDSPPass(PassRegistry &);
 void initializeARMPreAllocLoadStoreOptLegacyPass(PassRegistry &);
 void initializeARMSLSHardeningPass(PassRegistry &);
+void initializeARMPalisadeStoreHardeningPass(PassRegistry &);
 void initializeMVEGatherScatterLoweringPass(PassRegistry &);
 void initializeMVELaneInterleavingPass(PassRegistry &);
 void initializeMVETPAndVPTOptimisationsPass(PassRegistry &);

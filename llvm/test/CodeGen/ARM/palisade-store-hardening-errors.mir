@@ -1,0 +1,81 @@
+# RUN: split-file %s %t
+# RUN: not llc -mtriple=thumbv8.1m.main-none-eabi -mcpu=cortex-m85 -run-pass=arm-palisade-store-hardening %t/mixed.mir -o /dev/null 2>&1 | FileCheck %s --check-prefix=MIXED
+# RUN: not llc -mtriple=thumbv8.1m.main-none-eabi -mcpu=cortex-m85 -run-pass=arm-palisade-store-hardening %t/release.mir -o /dev/null 2>&1 | FileCheck %s --check-prefix=RELEASE
+# RUN: not llc -mtriple=thumbv8.1m.main-none-eabi -mcpu=cortex-m85 -run-pass=arm-palisade-store-hardening %t/exclusive.mir -o /dev/null 2>&1 | FileCheck %s --check-prefix=EXCLUSIVE
+# RUN: not llc -mtriple=thumbv8.1m.main-none-eabi -mcpu=cortex-m85 -run-pass=arm-palisade-store-hardening %t/sp-writeback.mir -o /dev/null 2>&1 | FileCheck %s --check-prefix=SP
+# RUN: not llc -mtriple=thumbv6m-none-eabi -run-pass=arm-palisade-store-hardening %t/frame.mir -o /dev/null 2>&1 | FileCheck %s --check-prefix=TARGET
+# RUN: not llc -mtriple=armv7-none-eabi -run-pass=arm-palisade-store-hardening %t/frame.mir -o /dev/null 2>&1 | FileCheck %s --check-prefix=TARGET
+# RUN: not llc -mtriple=thumbv8.1m.main-none-eabi -mcpu=cortex-m85 -run-pass=arm-palisade-store-hardening %t/frame.mir -o /dev/null 2>&1 | FileCheck %s --check-prefix=FRAME
+# RUN: not llc -mtriple=thumbv8.1m.main-none-eabi -mcpu=cortex-m85 -arm-enable-palisade-store-hardening %t/locals.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=LOCALS
+
+# MIXED: Palisade store hardening: store crosses protection domains (t2STRDi8) in function 'mixed'
+# RELEASE: Palisade store hardening: unsupported store (t2STL) in function 'release'
+# EXCLUSIVE: Palisade store hardening: unsupported store (t2STREX) in function 'exclusive'
+# SP: Palisade store hardening: store with SP writeback (t2STR_PRE) in function 'sp_writeback'
+# TARGET: Palisade store hardening requires Thumb-2 M-profile
+# FRAME: Palisade store hardening requires valid callee-saved information
+# LOCALS: Palisade store hardening: store crosses protection domains (t2STRDi8) in function 'locals'
+
+#--- mixed.mir
+---
+name: mixed
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r0, $r1, $r2
+    t2STRDi8 $r1, $r2, $r0, 0, 14, $noreg :: (store (s32)), (store (s32), addrspace 200)
+    tBX_RET 14, $noreg
+...
+#--- release.mir
+# There is no unprivileged store-release instruction.
+---
+name: release
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r0, $r1
+    t2STL $r1, $r0, 14, $noreg :: (store release (s32))
+    tBX_RET 14, $noreg
+...
+#--- exclusive.mir
+---
+name: exclusive
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r0, $r1
+    $r2 = t2STREX $r1, $r0, 0, 14, $noreg
+    tBX_RET 14, $noreg
+...
+#--- sp-writeback.mir
+---
+name: sp_writeback
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r0
+    early-clobber $sp = t2STR_PRE $r0, $sp, -4, 14, $noreg :: (store (s32))
+    tBX_RET 14, $noreg
+...
+#--- frame.mir
+---
+name: frame
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r0, $r1
+    t2STRi12 $r1, $r0, 1024, 14, $noreg :: (store (s32))
+    tBX_RET 14, $noreg
+...
+#--- locals.ll
+; Known limitation until stack splitting: ordinary and protected locals share
+; SP, so the load/store optimizer may combine their stores into one STRD.
+define void @locals(i32 %x, i32 %y) {
+  %a = alloca i32, align 8
+  %b = alloca i32, addrspace(200)
+  store i32 %x, ptr %a
+  store i32 %y, ptr addrspace(200) %b
+  call void @consume(ptr %a, ptr addrspace(200) %b)
+  ret void
+}
+declare void @consume(ptr, ptr addrspace(200))

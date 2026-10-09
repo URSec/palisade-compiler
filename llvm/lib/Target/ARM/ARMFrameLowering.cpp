@@ -108,6 +108,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "ARMFrameLowering.h"
+#include "ARM.h"
 #include "ARMBaseInstrInfo.h"
 #include "ARMBaseRegisterInfo.h"
 #include "ARMConstantPoolValue.h"
@@ -2773,6 +2774,8 @@ void ARMFrameLowering::determineCalleeSaves(MachineFunction &MF,
   MachineRegisterInfo &MRI = MF.getRegInfo();
   const TargetRegisterInfo *TRI = MF.getSubtarget().getRegisterInfo();
   (void)TRI;  // Silence unused warning in non-assert builds.
+  if (isARMPalisadeStoreHardeningEnabled())
+    reservePalisadeSpillSlots(MF);
   Register FramePtr = STI.getFramePointerReg();
   ARMSubtarget::PushPopSplitVariation PushPopSplit =
       STI.getPushPopSplitVariation(MF);

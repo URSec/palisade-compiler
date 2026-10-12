@@ -4,57 +4,59 @@
 # RUN: llc -mtriple=thumbv8.1m.main-none-eabi -mcpu=cortex-m85 -start-after=arm-pseudo -arm-enable-palisade-store-hardening -verify-machineinstrs -filetype=obj %s -o /dev/null
 
 --- |
-  define void @domains() {
-    %ordinary = alloca i32
-    %protected = alloca i32, addrspace(200)
+  ; Hardened stores name IR memory through %p.
+  define void @domains(ptr %p, ptr addrspace(200) %q) {
+    %local = alloca i32
     ret void
   }
-  define void @immediates() { ret void }
-  define void @register_offsets() { ret void }
-  define void @writeback() { ret void }
-  define void @multiple() { ret void }
-  define void @floating_point() { ret void }
-  define void @undef_value() { ret void }
-  define void @free_register() { ret void }
-  define void @save_one() { ret void }
-  define void @save_two() { ret void }
-  define void @sp_relative() { ret void }
-  define void @predicated() { ret void }
+  define void @immediates(ptr %p) { ret void }
+  define void @register_offsets(ptr %p) { ret void }
+  define void @writeback(ptr %p) { ret void }
+  define void @multiple(ptr %p) { ret void }
+  define void @floating_point(ptr %p) { ret void }
+  define void @undef_value(ptr %p) { ret void }
+  define void @free_register(ptr %p) { ret void }
+  define void @save_one(ptr %p) { ret void }
+  define void @save_two(ptr %p) { ret void }
+  define void @sp_relative(ptr %p) { ret void }
+  define void @predicated(ptr %p) { ret void }
 ...
 ---
 name: domains
 tracksRegLiveness: true
 frameInfo:
-  stackSize: 16
+  stackSize: 12
 stack:
-  - { id: 0, name: ordinary, offset: -4, size: 4, alignment: 4 }
-  - { id: 1, name: protected, offset: -8, size: 4, alignment: 4 }
-  - { id: 2, type: spill-slot, offset: -12, size: 4, alignment: 4 }
+  - { id: 0, name: local, offset: -4, size: 4, alignment: 4 }
+  - { id: 1, type: spill-slot, offset: -8, size: 4, alignment: 4 }
 body: |
   bb.0:
     liveins: $r0, $r1
-    ; Hardened: plain, atomic, no memory operand, ordinary alloca.
-    ; Kept: protected memory, protected alloca, spill slot, outgoing argument,
-    ; and a store that is already unprivileged.
+    ; Hardened: memory operands naming IR memory outside __protected.
+    ; Kept: __protected IR memory, compiler stack memory (frame slot, spill
+    ; slot, outgoing argument), no IR value, no memory operand, and a store
+    ; that is already unprivileged.
     ; CHECK-LABEL: name: domains
     ; CHECK:      t2STRT $r1, $r0, 0, 14
     ; CHECK-NEXT: t2STRT $r1, $r0, 4, 14
-    ; CHECK-NEXT: t2STRT $r1, $r0, 8, 14
-    ; CHECK-NEXT: t2STRi12 $r1, $r0, 12, 14
-    ; CHECK-NEXT: t2STRT $r1, $sp, 12, 14
+    ; CHECK-NEXT: t2STRT $r1, $sp, 8, 14
+    ; CHECK-NEXT: t2STRi12 $r1, $r0, 8, 14
     ; CHECK-NEXT: t2STRi12 $r1, $sp, 8, 14
     ; CHECK-NEXT: t2STRi12 $r1, $sp, 4, 14
     ; CHECK-NEXT: t2STRi12 $r1, $sp, 0, 14
-    ; CHECK-NEXT: t2STRT $r1, $r0, 16, 14
-    t2STRi12 $r1, $r0, 0, 14, $noreg :: (volatile store (s32))
-    t2STRi12 $r1, $r0, 4, 14, $noreg :: (store monotonic (s32))
-    t2STRi12 $r1, $r0, 8, 14, $noreg
-    t2STRi12 $r1, $r0, 12, 14, $noreg :: (store (s32), addrspace 200)
-    t2STRi12 $r1, $sp, 12, 14, $noreg :: (store (s32) into %stack.0.ordinary)
-    t2STRi12 $r1, $sp, 8, 14, $noreg :: (store (s32) into %stack.1.protected)
-    t2STRi12 $r1, $sp, 4, 14, $noreg :: (store (s32) into %stack.2)
+    ; CHECK-NEXT: t2STRi12 $r1, $r0, 12, 14
+    ; CHECK-NEXT: t2STRi12 $r1, $r0, 16, 14
+    ; CHECK-NEXT: t2STRT $r1, $r0, 20, 14
+    t2STRi12 $r1, $r0, 0, 14, $noreg :: (volatile store (s32) into %ir.p)
+    t2STRi12 $r1, $r0, 4, 14, $noreg :: (store monotonic (s32) into %ir.p)
+    t2STRi12 $r1, $sp, 8, 14, $noreg :: (store (s32) into %ir.local)
+    t2STRi12 $r1, $r0, 8, 14, $noreg :: (store (s32) into %ir.q, addrspace 200)
+    t2STRi12 $r1, $sp, 8, 14, $noreg :: (store (s32) into %stack.0.local)
+    t2STRi12 $r1, $sp, 4, 14, $noreg :: (store (s32) into %stack.1)
     t2STRi12 $r1, $sp, 0, 14, $noreg :: (store (s32) into stack)
-    t2STRT $r1, $r0, 16, 14, $noreg :: (store (s32))
+    t2STRi12 $r1, $r0, 12, 14, $noreg :: (store (s32))
+    t2STRi12 $r1, $r0, 16, 14, $noreg
+    t2STRT $r1, $r0, 20, 14, $noreg :: (store (s32) into %ir.p)
     tBX_RET 14, $noreg
 ...
 ---
@@ -75,16 +77,16 @@ body: |
     ; CHECK-NEXT: t2STRHT $r1, $r2, 0, 14
     ; CHECK-NEXT: $r2 = t2SUBri12 $r0, 255, 14
     ; CHECK-NEXT: t2STRBT $r1, $r2, 0, 14
-    ; CHECK-NEXT: $r1 = tMOVr $sp, 14
+    ; CHECK-NEXT: $r1 = t2ADDri12 $sp, 0, 14
     ; CHECK-NEXT: t2STRT $r1, $r0, 0, 14
-    tSTRi $r1, $r0, 31, 14, $noreg :: (store (s32))
-    tSTRHi $r1, $r0, 31, 14, $noreg :: (store (s16))
-    tSTRBi $r1, $r0, 31, 14, $noreg :: (store (s8))
-    tSTRspi $r1, $sp, 63, 14, $noreg :: (store (s32))
-    t2STRi12 $r1, $r0, 255, 14, $noreg :: (store (s32), align 1)
-    t2STRHi12 $r1, $r0, 256, 14, $noreg :: (store (s16))
-    t2STRBi8 $r1, $r0, -255, 14, $noreg :: (store (s8))
-    t2STRi12 $sp, $r0, 0, 14, $noreg :: (store (s32))
+    tSTRi $r1, $r0, 31, 14, $noreg :: (store (s32) into %ir.p)
+    tSTRHi $r1, $r0, 31, 14, $noreg :: (store (s16) into %ir.p)
+    tSTRBi $r1, $r0, 31, 14, $noreg :: (store (s8) into %ir.p)
+    tSTRspi $r1, $sp, 63, 14, $noreg :: (store (s32) into %ir.p)
+    t2STRi12 $r1, $r0, 255, 14, $noreg :: (store (s32) into %ir.p, align 1)
+    t2STRHi12 $r1, $r0, 256, 14, $noreg :: (store (s16) into %ir.p)
+    t2STRBi8 $r1, $r0, -255, 14, $noreg :: (store (s8) into %ir.p)
+    t2STRi12 $sp, $r0, 0, 14, $noreg :: (store (s32) into %ir.p)
     tBX_RET 14, $noreg
 ...
 ---
@@ -101,9 +103,9 @@ body: |
     ; CHECK-NEXT: t2STRBT $r1, $r2, 0, 14
     ; CHECK-NEXT: $r2 = t2ADDrs $r0, $r1, 2, 14
     ; CHECK-NEXT: t2STRHT $r1, $r2, 0, 14
-    t2STRs $r0, $r0, $r1, 3, 1, $cpsr :: (store (s32))
-    tSTRBr $r1, $r0, $r1, 14, $noreg :: (store (s8))
-    tSTRHr $r1, $r0, $r1, 14, $noreg :: (store (s16))
+    t2STRs $r0, $r0, $r1, 3, 1, $cpsr :: (store (s32) into %ir.p)
+    tSTRBr $r1, $r0, $r1, 14, $noreg :: (store (s8) into %ir.p)
+    tSTRHr $r1, $r0, $r1, 14, $noreg :: (store (s16) into %ir.p)
     tBX_RET 14, $noreg, implicit $r0, implicit $r1, implicit $cpsr
 ...
 ---
@@ -124,10 +126,10 @@ body: |
     ; CHECK-NEXT: t2STRT $r1, $r0, 0, 14
     ; CHECK-NEXT: t2STRT $r2, $r0, 4, 14
     ; CHECK-NEXT: $r0 = t2SUBri12 $r0, 8, 14
-    early-clobber $r0 = t2STR_PRE $r1, $r0, -4, 14, $noreg :: (store (s32))
-    early-clobber $r0 = t2STRH_POST $r1, $r0, 2, 14, $noreg :: (store (s16))
-    early-clobber $r0 = t2STRD_PRE $r1, $r2, $r0, 8, 14, $noreg :: (store (s64))
-    early-clobber $r0 = t2STRD_POST $r1, $r2, $r0, -8, 14, $noreg :: (store (s64))
+    early-clobber $r0 = t2STR_PRE $r1, $r0, -4, 14, $noreg :: (store (s32) into %ir.p)
+    early-clobber $r0 = t2STRH_POST $r1, $r0, 2, 14, $noreg :: (store (s16) into %ir.p)
+    early-clobber $r0 = t2STRD_PRE $r1, $r2, $r0, 8, 14, $noreg :: (store (s64) into %ir.p)
+    early-clobber $r0 = t2STRD_POST $r1, $r2, $r0, -8, 14, $noreg :: (store (s64) into %ir.p)
     tBX_RET 14, $noreg, implicit $r0
 ...
 ---
@@ -153,11 +155,11 @@ body: |
     ; CHECK-NEXT: t2STRT $r1, $r3, 0, 14
     ; CHECK-NEXT: t2STRT $r2, $r3, 4, 14
     ; CHECK-NEXT: $r0 = t2SUBri12 $r0, 8, 14
-    t2STRDi8 $r1, $r2, $r0, 252, 14, $noreg :: (store (s64), align 4)
-    t2STMIA $r0, 14, $noreg, $r1, $r2 :: (store (s64), align 4)
-    t2STMDB $r0, 14, $noreg, $r1, $r2 :: (store (s64), align 4)
-    $r0 = t2STMIA_UPD $r0, 14, $noreg, $r1, $r2, $r3 :: (store (s96), align 4)
-    $r0 = t2STMDB_UPD $r0, 14, $noreg, $r1, $r2 :: (store (s64), align 4)
+    t2STRDi8 $r1, $r2, $r0, 252, 14, $noreg :: (store (s64) into %ir.p, align 4)
+    t2STMIA $r0, 14, $noreg, $r1, $r2 :: (store (s64) into %ir.p, align 4)
+    t2STMDB $r0, 14, $noreg, $r1, $r2 :: (store (s64) into %ir.p, align 4)
+    $r0 = t2STMIA_UPD $r0, 14, $noreg, $r1, $r2, $r3 :: (store (s96) into %ir.p, align 4)
+    $r0 = t2STMDB_UPD $r0, 14, $noreg, $r1, $r2 :: (store (s64) into %ir.p, align 4)
     tBX_RET 14, $noreg, implicit $r0
 ...
 ---
@@ -190,10 +192,10 @@ body: |
     ; CHECK-NEXT: $r1 = VMOVRS $s1, 14
     ; CHECK-NEXT: t2STRT $r1, $r2, 4, 14
     ; CHECK-NEXT: $r0 = t2SUBri12 $r0, 8, 14
-    VSTRS $s2, $r0, 0, 14, $noreg :: (store (s32))
-    VSTRD $d0, $r0, 255, 14, $noreg :: (store (s64))
-    VSTMDIA $r0, 14, $noreg, $d0 :: (store (s64), align 4)
-    $r0 = VSTMSDB_UPD $r0, 14, $noreg, $s0, $s1 :: (store (s64), align 4)
+    VSTRS $s2, $r0, 0, 14, $noreg :: (store (s32) into %ir.p)
+    VSTRD $d0, $r0, 255, 14, $noreg :: (store (s64) into %ir.p)
+    VSTMDIA $r0, 14, $noreg, $d0 :: (store (s64) into %ir.p, align 4)
+    $r0 = VSTMSDB_UPD $r0, 14, $noreg, $s0, $s1 :: (store (s64) into %ir.p, align 4)
     tBX_RET 14, $noreg, implicit $r0
 ...
 ---
@@ -207,7 +209,7 @@ body: |
     ; CHECK-NEXT: t2STRT $r1, $r0, 0, 14
     ; CHECK-NEXT: $r1 = VMOVRS undef $s
     ; CHECK-NEXT: t2STRT $r1, $r0, 4, 14
-    VSTRD undef $d0, $r0, 0, 14, $noreg :: (store (s64))
+    VSTRD undef $d0, $r0, 0, 14, $noreg :: (store (s64) into %ir.p)
     tBX_RET 14, $noreg
 ...
 ---
@@ -221,7 +223,7 @@ body: |
     ; CHECK:      $r2 = t2ADDri12 $r0, 1024, 14
     ; CHECK-NEXT: t2STRT $r1, $r2, 0, 14
     ; CHECK-NEXT: tBX_RET
-    t2STRi12 $r1, $r0, 1024, 14, $noreg :: (store (s32))
+    t2STRi12 $r1, $r0, 1024, 14, $noreg :: (store (s32) into %ir.p)
     tBX_RET 14, $noreg
 ...
 ---
@@ -237,7 +239,7 @@ body: |
     ; CHECK-NEXT: t2STRT $r1, $r2, 0, 14
     ; CHECK-NEXT: $r2, $sp = t2LDR_POST $sp, 4, 14
     ; CHECK-NEXT: tBX_RET
-    t2STRi12 $r1, $r0, 1024, 14, $noreg :: (store (s32))
+    t2STRi12 $r1, $r0, 1024, 14, $noreg :: (store (s32) into %ir.p)
     tBX_RET 14, $noreg, implicit $r0, implicit $r1, implicit $r2, implicit $r3, implicit $r4, implicit $r5, implicit $r6, implicit $r7, implicit $r8, implicit $r9, implicit $r10, implicit $r11, implicit $r12, implicit $lr
 ...
 ---
@@ -254,7 +256,7 @@ body: |
     ; CHECK-NEXT: t2STRT $r1, $r2, 0, 14
     ; CHECK-NEXT: $sp = t2LDMIA_UPD $sp, 14 {{.*}}, def $r1, def $r2
     ; CHECK-NEXT: tBX_RET
-    VSTRS $s0, $r0, 255, 14, $noreg :: (store (s32))
+    VSTRS $s0, $r0, 255, 14, $noreg :: (store (s32) into %ir.p)
     tBX_RET 14, $noreg, implicit $r0, implicit $r1, implicit $r2, implicit $r3, implicit $r4, implicit $r5, implicit $r6, implicit $r7, implicit $r8, implicit $r9, implicit $r10, implicit $r11, implicit $r12, implicit $lr
 ...
 ---
@@ -266,8 +268,8 @@ body: |
     ; Offsets from SP, and a stored SP value, are corrected for the push.
     ; CHECK-LABEL: name: sp_relative
     ; CHECK:      $sp = t2STMDB_UPD $sp, 14 {{.*}}, $r0, $r1
-    ; CHECK-NEXT: $r0 = t2ADDri12 $sp, 8, 14
     ; CHECK-NEXT: $r1 = t2ADDri12 $sp, 260, 14
+    ; CHECK-NEXT: $r0 = t2ADDri12 $sp, 8, 14
     ; CHECK-NEXT: t2STRT $r0, $r1, 0, 14
     ; CHECK-NEXT: $sp = t2LDMIA_UPD $sp, 14 {{.*}}, def $r0, def $r1
     ; CHECK-NEXT: early-clobber $sp = t2STR_PRE $r1, $sp, -4, 14
@@ -275,8 +277,8 @@ body: |
     ; CHECK-NEXT: $r1 = t2ADDri12 $r1, 4, 14
     ; CHECK-NEXT: t2STRT $r0, $r1, 0, 14
     ; CHECK-NEXT: $r1, $sp = t2LDR_POST $sp, 4, 14
-    t2STRi12 $sp, $sp, 252, 14, $noreg :: (store (s32))
-    t2STRi12 $r0, $sp, 4095, 14, $noreg :: (store (s32), align 1)
+    t2STRi12 $sp, $sp, 252, 14, $noreg :: (store (s32) into %ir.p)
+    t2STRi12 $r0, $sp, 4095, 14, $noreg :: (store (s32) into %ir.p, align 1)
     tBX_RET 14, $noreg, implicit $r0, implicit $r1, implicit $r2, implicit $r3, implicit $r4, implicit $r5, implicit $r6, implicit $r7, implicit $r8, implicit $r9, implicit $r10, implicit $r11, implicit $r12, implicit $lr
 ...
 ---
@@ -291,6 +293,6 @@ body: |
     ; CHECK-NEXT: $r2 = t2ADDrs $r0, $r1, 18, 1 {{.*}} $cpsr
     ; CHECK-NEXT: t2STRT $r0, $r2, 0, 1 {{.*}} $cpsr
     ; CHECK-NEXT: $r2, $sp = t2LDR_POST $sp, 4, 14
-    t2STRs $r0, $r0, $r1, 2, 1, $cpsr :: (store (s32))
+    t2STRs $r0, $r0, $r1, 2, 1, $cpsr :: (store (s32) into %ir.p)
     tBX_RET 14, $noreg, implicit $r0, implicit $r1, implicit $r2, implicit $r3, implicit $r4, implicit $r5, implicit $r6, implicit $r7, implicit $r8, implicit $r9, implicit $r10, implicit $r11, implicit $r12, implicit $lr, implicit $cpsr
 ...

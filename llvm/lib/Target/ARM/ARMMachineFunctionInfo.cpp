@@ -14,9 +14,7 @@ using namespace llvm;
 void ARMFunctionInfo::anchor() {}
 
 yaml::ARMFunctionInfo::ARMFunctionInfo(const llvm::ARMFunctionInfo &MFI)
-    : LRSpilled(MFI.isLRSpilled()),
-      PalisadeSpillSlots(MFI.getPalisadeSpillSlots().begin(),
-                         MFI.getPalisadeSpillSlots().end()) {}
+    : LRSpilled(MFI.isLRSpilled()) {}
 
 void yaml::ARMFunctionInfo::mappingImpl(yaml::IO &YamlIO) {
   MappingTraits<ARMFunctionInfo>::mapping(YamlIO, *this);
@@ -25,8 +23,6 @@ void yaml::ARMFunctionInfo::mappingImpl(yaml::IO &YamlIO) {
 void ARMFunctionInfo::initializeBaseYamlFields(
     const yaml::ARMFunctionInfo &YamlMFI) {
   LRSpilled = YamlMFI.LRSpilled;
-  PalisadeSpillSlots.assign(YamlMFI.PalisadeSpillSlots.begin(),
-                            YamlMFI.PalisadeSpillSlots.end());
 }
 
 static bool GetBranchTargetEnforcement(const Function &F,

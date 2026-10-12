@@ -15,7 +15,6 @@
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallPtrSet.h"
-#include "llvm/ADT/SmallVector.h"
 #include "llvm/CodeGen/MIRYamlMapping.h"
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/IR/GlobalVariable.h"
@@ -55,9 +54,6 @@ class ARMFunctionInfo : public MachineFunctionInfo {
   /// HasStackFrame - True if this function has a stack frame. Set by
   /// determineCalleeSaves().
   bool HasStackFrame = false;
-
-  // Emergency slots for temporaries introduced by late store hardening.
-  SmallVector<int, 2> PalisadeSpillSlots;
 
   /// RestoreSPFromFP - True if epilogue should restore SP from FP. Set by
   /// emitPrologue.
@@ -316,15 +312,11 @@ public:
   bool branchTargetEnforcement() const { return BranchTargetEnforcement; }
 
   void initializeBaseYamlFields(const yaml::ARMFunctionInfo &YamlMFI);
-
-  ArrayRef<int> getPalisadeSpillSlots() const { return PalisadeSpillSlots; }
-  void addPalisadeSpillSlot(int FI) { PalisadeSpillSlots.push_back(FI); }
 };
 
 namespace yaml {
 struct ARMFunctionInfo final : public yaml::MachineFunctionInfo {
   bool LRSpilled;
-  std::vector<int> PalisadeSpillSlots;
 
   ARMFunctionInfo() = default;
   ARMFunctionInfo(const llvm::ARMFunctionInfo &MFI);
@@ -336,7 +328,6 @@ struct ARMFunctionInfo final : public yaml::MachineFunctionInfo {
 template <> struct MappingTraits<ARMFunctionInfo> {
   static void mapping(IO &YamlIO, ARMFunctionInfo &MFI) {
     YamlIO.mapOptional("isLRSpilled", MFI.LRSpilled);
-    YamlIO.mapOptional("palisadeSpillSlots", MFI.PalisadeSpillSlots);
   }
 };
 

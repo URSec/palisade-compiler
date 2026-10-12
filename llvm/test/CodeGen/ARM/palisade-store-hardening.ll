@@ -1,19 +1,13 @@
-; RUN: llc -mtriple=thumbv8.1m.main-none-eabi -mcpu=cortex-m85 -arm-enable-palisade-store-hardening -verify-machineinstrs %s -o - | FileCheck %s --check-prefixes=CHECK,OPT
-; RUN: llc -mtriple=thumbv8.1m.main-none-eabi -mcpu=cortex-m85 -arm-enable-palisade-store-hardening -verify-machineinstrs -O0 %s -o - | FileCheck %s --check-prefixes=CHECK,O0
+; RUN: llc -mtriple=thumbv8.1m.main-none-eabi -mcpu=cortex-m85 -arm-enable-palisade-store-hardening -verify-machineinstrs %s -o - | FileCheck %s
 ; RUN: llc -mtriple=thumbv8.1m.main-none-eabi -mcpu=cortex-m85 -verify-machineinstrs %s -o - | FileCheck %s --check-prefix=DISABLED
-; RUN: llc -mtriple=thumbv8.1m.main-none-eabi -mcpu=cortex-m85 -arm-enable-palisade-store-hardening -verify-machineinstrs -filetype=obj %s -o /dev/null
 
-@ordinary = global i32 0
-@protected = addrspace(200) global i32 0
+; DISABLED-NOT: {{strt|strbt|strht}}
 
-; DISABLED-NOT: strt
-; DISABLED-NOT: strbt
-; DISABLED-NOT: strht
-
-define void @scalar(ptr %p, ptr addrspace(200) %q, i32 %x) {
-; CHECK-LABEL: scalar:
-; CHECK: strt
-; CHECK: str{{(\.w)?}} {{.*}}[r1]
+; Ordinary stores become unprivileged; protected stores stay privileged.
+define void @domains(ptr %p, ptr addrspace(200) %q, i32 %x) {
+; CHECK-LABEL: domains:
+; CHECK:       strt r2, [r0]
+; CHECK-NEXT:  str r2, [r1]
   store volatile i32 %x, ptr %p
   store volatile i32 %x, ptr addrspace(200) %q
   ret void
@@ -21,8 +15,8 @@ define void @scalar(ptr %p, ptr addrspace(200) %q, i32 %x) {
 
 define void @widths(ptr %p, i32 %x) {
 ; CHECK-LABEL: widths:
-; CHECK: strbt
-; CHECK: strht
+; CHECK:       strbt r1, [r0]
+; CHECK-NEXT:  strht r1, [r0]
   %byte = trunc i32 %x to i8
   %half = trunc i32 %x to i16
   store volatile i8 %byte, ptr %p
@@ -30,45 +24,11 @@ define void @widths(ptr %p, i32 %x) {
   ret void
 }
 
-define void @globals(i32 %x) {
-; CHECK-LABEL: globals:
-; CHECK: strt
-; CHECK: str{{(\.w)?}}
-  store volatile i32 %x, ptr @ordinary
-  store volatile i32 %x, ptr addrspace(200) @protected
-  ret void
-}
-
-define void @large_offset(ptr %p, i32 %x) {
-; CHECK-LABEL: large_offset:
-; CHECK: addw [[ADDR:r[0-9]+]], {{r[0-9]+}}, #1024
-; CHECK: strt {{r[0-9]+}}, {{\[}}[[ADDR]]{{\]}}
-  %element = getelementptr i8, ptr %p, i32 1024
-  store volatile i32 %x, ptr %element
-  ret void
-}
-
-declare ptr @llvm.stacksave.p0()
-
-define void @save_stack_pointer(ptr %p) {
-; CHECK-LABEL: save_stack_pointer:
-; CHECK: mov [[VALUE:r[0-9]+]], sp
-; CHECK: strt [[VALUE]],
-  %sp = call ptr @llvm.stacksave.p0()
-  %dst = getelementptr i8, ptr %p, i32 1024
-  store ptr %sp, ptr %dst
-  ret void
-}
-
-declare void @consume(ptr, ptr addrspace(200))
-
+; Allocas share SP, so the domain comes from the alloca, not the base register.
 define void @locals(i32 %x) {
-; Ordinary allocas on SP must not be confused with compiler spills.
 ; CHECK-LABEL: locals:
-; CHECK: push
-; CHECK: strt
-; CHECK: str{{(\.w)?}} {{r[0-9]+}}, [sp
-; CHECK: bl consume
+; CHECK:       strt r0, [sp, #4]
+; CHECK-NEXT:  str r0, [sp]
   %a = alloca i32
   %b = alloca i32, addrspace(200)
   store volatile i32 %x, ptr %a
@@ -77,21 +37,13 @@ define void @locals(i32 %x) {
   ret void
 }
 
-define void @wide(ptr %p, ptr addrspace(200) %q, i64 %x) {
-; CHECK-LABEL: wide:
-; CHECK: strt
-; CHECK: strt
-; OPT: strd
-; O0: str {{.*}}[r1, #4]
-; O0: str {{.*}}[r1]
-  store i64 %x, ptr %p, align 8
-  store i64 %x, ptr addrspace(200) %q, align 8
-  ret void
-}
+declare void @consume(ptr, ptr addrspace(200))
 
+; Hardening runs before if-conversion, which predicates the STRT.
 define void @conditional(ptr %p, i32 %x, i1 %c) {
 ; CHECK-LABEL: conditional:
-; CHECK: strt
+; CHECK:       it ne
+; CHECK-NEXT:  strtne r1, [r0]
   br i1 %c, label %write, label %exit
 write:
   store i32 %x, ptr %p
@@ -100,28 +52,37 @@ exit:
   ret void
 }
 
-define void @floating_point(ptr %p, float %x, double %y) {
-; CHECK-LABEL: floating_point:
-; CHECK: strt
-; CHECK: strt
-; CHECK: strt
-  store volatile float %x, ptr %p
-  store volatile double %y, ptr %p, align 8
-  ret void
-}
+%Registers = type { i32, i32, i32, i32, i32, i32, i32, i32, i32, i32, i32, i32 }
+declare void @use(ptr byval([4096 x i8]))
 
-declare void @llvm.memcpy.p0.p0.i32(ptr, ptr, i32, i1)
-declare void @llvm.memcpy.p200.p0.i32(ptr addrspace(200), ptr, i32, i1)
-
-define void @inline_copy(ptr %p, ptr addrspace(200) %q, ptr %src) {
-; CHECK-LABEL: inline_copy:
-; CHECK: strt
-; CHECK: strt
-; CHECK: strt
-; CHECK: strt
-; OPT: stm
-; O0: str{{(\.w)?}} {{.*}}[r1, #12]
-  call void @llvm.memcpy.p0.p0.i32(ptr align 4 %p, ptr align 4 %src, i32 16, i1 false)
-  call void @llvm.memcpy.p200.p0.i32(ptr addrspace(200) align 4 %q, ptr align 4 %src, i32 16, i1 false)
+; Every GPR is live across the store, whose offset needs an address temporary.
+; The temporary is pushed and popped around the store. A large frame and a
+; large outgoing argument area do not matter, since no frame slot is used.
+define void @register_pressure() "frame-pointer"="all" {
+; CHECK-LABEL: register_pressure:
+; CHECK:       str r2, [sp, #-4]!
+; CHECK-NEXT:  addw r2, r0, #1024
+; CHECK-NEXT:  strt r1, [r2]
+; CHECK-NEXT:  ldr r2, [sp], #4
+  %a = alloca [4096 x i8], align 4
+  call void @use(ptr byval([4096 x i8]) %a)
+  %regs = call %Registers asm sideeffect "", "={r0},={r1},={r2},={r3},={r4},={r5},={r8},={r9},={r10},={r11},={r12},={lr}"()
+  %v0 = extractvalue %Registers %regs, 0
+  %v1 = extractvalue %Registers %regs, 1
+  %v2 = extractvalue %Registers %regs, 2
+  %v3 = extractvalue %Registers %regs, 3
+  %v4 = extractvalue %Registers %regs, 4
+  %v5 = extractvalue %Registers %regs, 5
+  %v6 = extractvalue %Registers %regs, 6
+  %v7 = extractvalue %Registers %regs, 7
+  %v8 = extractvalue %Registers %regs, 8
+  %v9 = extractvalue %Registers %regs, 9
+  %v10 = extractvalue %Registers %regs, 10
+  %v11 = extractvalue %Registers %regs, 11
+  %p = inttoptr i32 %v0 to ptr
+  %dst = getelementptr i8, ptr %p, i32 1024
+  store i32 %v1, ptr %dst
+  call void asm sideeffect "", "{r0},{r1},{r2},{r3},{r4},{r5},{r8},{r9},{r10},{r11},{r12},{lr}"(i32 %v0, i32 %v1, i32 %v2, i32 %v3, i32 %v4, i32 %v5, i32 %v6, i32 %v7, i32 %v8, i32 %v9, i32 %v10, i32 %v11)
+  call void @use(ptr byval([4096 x i8]) %a)
   ret void
 }

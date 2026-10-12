@@ -10,21 +10,21 @@
     ret void
   }
   define void @immediates() { ret void }
-  define void @relaxed_atomic() { ret void }
   define void @register_offsets() { ret void }
   define void @writeback() { ret void }
   define void @multiple() { ret void }
   define void @floating_point() { ret void }
-  define void @fp_multiple() { ret void }
-  define void @multiple_no_writeback() { ret void }
-  define void @emergency_spill() { ret void }
-  define void @fp_emergency_spills() { ret void }
+  define void @undef_value() { ret void }
+  define void @free_register() { ret void }
+  define void @save_one() { ret void }
+  define void @save_two() { ret void }
+  define void @sp_relative() { ret void }
+  define void @predicated() { ret void }
 ...
 ---
 name: domains
 tracksRegLiveness: true
 frameInfo:
-  isCalleeSavedInfoValid: true
   stackSize: 16
 stack:
   - { id: 0, name: ordinary, offset: -4, size: 4, alignment: 4 }
@@ -33,45 +33,50 @@ stack:
 body: |
   bb.0:
     liveins: $r0, $r1
+    ; Hardened: plain, atomic, no memory operand, ordinary alloca.
+    ; Kept: protected memory, protected alloca, spill slot, outgoing argument,
+    ; and a store that is already unprivileged.
     ; CHECK-LABEL: name: domains
-    ; CHECK: t2STRT $r1, $r0, 0, 14 {{.*}} :: (volatile store (s32))
-    ; CHECK-NEXT: t2STRi12 $r1, $r0, 4, 14 {{.*}}addrspace 200)
-    ; CHECK-NEXT: t2STRT $r1, $sp, 12, 14 {{.*}}%stack.0.ordinary)
-    ; CHECK-NEXT: t2STRi12 $r1, $sp, 8, 14 {{.*}}%stack.1.protected)
-    ; CHECK-NEXT: t2STRi12 $r1, $sp, 4, 14 {{.*}}%stack.2)
-    ; CHECK-NEXT: t2STRi12 $r1, $sp, 0, 14 {{.*}}into stack)
+    ; CHECK:      t2STRT $r1, $r0, 0, 14
+    ; CHECK-NEXT: t2STRT $r1, $r0, 4, 14
     ; CHECK-NEXT: t2STRT $r1, $r0, 8, 14
-    ; CHECK-NEXT: t2STRT $r1, $r0, 12, 14
+    ; CHECK-NEXT: t2STRi12 $r1, $r0, 12, 14
+    ; CHECK-NEXT: t2STRT $r1, $sp, 12, 14
+    ; CHECK-NEXT: t2STRi12 $r1, $sp, 8, 14
+    ; CHECK-NEXT: t2STRi12 $r1, $sp, 4, 14
+    ; CHECK-NEXT: t2STRi12 $r1, $sp, 0, 14
+    ; CHECK-NEXT: t2STRT $r1, $r0, 16, 14
     t2STRi12 $r1, $r0, 0, 14, $noreg :: (volatile store (s32))
-    t2STRi12 $r1, $r0, 4, 14, $noreg :: (store (s32), addrspace 200)
+    t2STRi12 $r1, $r0, 4, 14, $noreg :: (store monotonic (s32))
+    t2STRi12 $r1, $r0, 8, 14, $noreg
+    t2STRi12 $r1, $r0, 12, 14, $noreg :: (store (s32), addrspace 200)
     t2STRi12 $r1, $sp, 12, 14, $noreg :: (store (s32) into %stack.0.ordinary)
     t2STRi12 $r1, $sp, 8, 14, $noreg :: (store (s32) into %stack.1.protected)
     t2STRi12 $r1, $sp, 4, 14, $noreg :: (store (s32) into %stack.2)
     t2STRi12 $r1, $sp, 0, 14, $noreg :: (store (s32) into stack)
-    t2STRi12 $r1, $r0, 8, 14, $noreg
-    t2STRT $r1, $r0, 12, 14, $noreg :: (store (s32))
+    t2STRT $r1, $r0, 16, 14, $noreg :: (store (s32))
     tBX_RET 14, $noreg
 ...
 ---
 name: immediates
 tracksRegLiveness: true
-frameInfo:
-  isCalleeSavedInfoValid: true
 body: |
   bb.0:
     liveins: $r0, $r1
+    ; STRT takes offsets 0-255. Others need an address temporary, and SP must
+    ; be copied to a GPR before it can be stored.
     ; CHECK-LABEL: name: immediates
-    ; CHECK: t2STRT $r1, $r0, 124,
-    ; CHECK-NEXT: t2STRHT $r1, $r0, 62,
-    ; CHECK-NEXT: t2STRBT $r1, $r0, 31,
-    ; CHECK-NEXT: t2STRT $r1, $sp, 252,
-    ; CHECK-NEXT: t2STRT $r1, $r0, 255,
-    ; CHECK-NEXT: [[ADDR:\$(r[0-9]+|lr)]] = t2ADDri12 $r0, 256,
-    ; CHECK-NEXT: t2STRHT $r1, {{(killed )?}}[[ADDR]], 0,
-    ; CHECK-NEXT: [[NEG:\$(r[0-9]+|lr)]] = t2SUBri12 $r0, 255,
-    ; CHECK-NEXT: t2STRBT $r1, {{(killed )?}}[[NEG]], 0,
-    ; CHECK-NEXT: [[MAX:\$(r[0-9]+|lr)]] = t2ADDri12 $r0, 4095,
-    ; CHECK-NEXT: t2STRT $r1, {{(killed )?}}[[MAX]], 0,
+    ; CHECK:      t2STRT $r1, $r0, 124, 14
+    ; CHECK-NEXT: t2STRHT $r1, $r0, 62, 14
+    ; CHECK-NEXT: t2STRBT $r1, $r0, 31, 14
+    ; CHECK-NEXT: t2STRT $r1, $sp, 252, 14
+    ; CHECK-NEXT: t2STRT $r1, $r0, 255, 14
+    ; CHECK-NEXT: $r2 = t2ADDri12 $r0, 256, 14
+    ; CHECK-NEXT: t2STRHT $r1, $r2, 0, 14
+    ; CHECK-NEXT: $r2 = t2SUBri12 $r0, 255, 14
+    ; CHECK-NEXT: t2STRBT $r1, $r2, 0, 14
+    ; CHECK-NEXT: $r1 = tMOVr $sp, 14
+    ; CHECK-NEXT: t2STRT $r1, $r0, 0, 14
     tSTRi $r1, $r0, 31, 14, $noreg :: (store (s32))
     tSTRHi $r1, $r0, 31, 14, $noreg :: (store (s16))
     tSTRBi $r1, $r0, 31, 14, $noreg :: (store (s8))
@@ -79,39 +84,23 @@ body: |
     t2STRi12 $r1, $r0, 255, 14, $noreg :: (store (s32), align 1)
     t2STRHi12 $r1, $r0, 256, 14, $noreg :: (store (s16))
     t2STRBi8 $r1, $r0, -255, 14, $noreg :: (store (s8))
-    t2STRi12 $r1, $r0, 4095, 14, $noreg :: (store (s32), align 1)
-    tBX_RET 14, $noreg
-...
----
-name: relaxed_atomic
-tracksRegLiveness: true
-frameInfo:
-  isCalleeSavedInfoValid: true
-body: |
-  bb.0:
-    liveins: $r0, $r1
-    ; A single aligned STRT is single-copy atomic, like the STR it replaces.
-    ; CHECK-LABEL: name: relaxed_atomic
-    ; CHECK: t2STRT $r1, $r0, 0, 14 {{.*}} :: (store monotonic (s32))
-    t2STRi12 $r1, $r0, 0, 14, $noreg :: (store monotonic (s32))
+    t2STRi12 $sp, $r0, 0, 14, $noreg :: (store (s32))
     tBX_RET 14, $noreg
 ...
 ---
 name: register_offsets
 tracksRegLiveness: true
-frameInfo:
-  isCalleeSavedInfoValid: true
 body: |
   bb.0:
     liveins: $r0, $r1, $cpsr
-    ; Source aliases the base or index; neither input may be adjusted in place.
+    ; The value may alias the base or index, so the address goes to a temporary.
     ; CHECK-LABEL: name: register_offsets
-    ; CHECK: [[A:\$(r[0-9]+|lr)]] = t2ADDrs $r0, $r1, 26, 1 {{.*}} $cpsr, $noreg
-    ; CHECK-NEXT: t2STRT $r0, {{(killed )?}}[[A]], 0, 1 {{.*}} $cpsr
-    ; CHECK-NEXT: [[B:\$(r[0-9]+|lr)]] = t2ADDrs $r0, $r1, 2,
-    ; CHECK-NEXT: t2STRBT $r1, {{(killed )?}}[[B]], 0,
-    ; CHECK-NEXT: [[C:\$(r[0-9]+|lr)]] = t2ADDrs $r0, $r1, 2,
-    ; CHECK-NEXT: t2STRHT $r1, {{(killed )?}}[[C]], 0,
+    ; CHECK:      $r2 = t2ADDrs $r0, $r1, 26, 1 {{.*}} $cpsr
+    ; CHECK-NEXT: t2STRT $r0, $r2, 0, 1 {{.*}} $cpsr
+    ; CHECK-NEXT: $r2 = t2ADDrs $r0, $r1, 2, 14
+    ; CHECK-NEXT: t2STRBT $r1, $r2, 0, 14
+    ; CHECK-NEXT: $r2 = t2ADDrs $r0, $r1, 2, 14
+    ; CHECK-NEXT: t2STRHT $r1, $r2, 0, 14
     t2STRs $r0, $r0, $r1, 3, 1, $cpsr :: (store (s32))
     tSTRBr $r1, $r0, $r1, 14, $noreg :: (store (s8))
     tSTRHr $r1, $r0, $r1, 14, $noreg :: (store (s16))
@@ -120,24 +109,21 @@ body: |
 ---
 name: writeback
 tracksRegLiveness: true
-frameInfo:
-  isCalleeSavedInfoValid: true
 body: |
   bb.0:
     liveins: $r0, $r1, $r2
+    ; The base is updated before a pre-indexed store and after a post-indexed one.
     ; CHECK-LABEL: name: writeback
-    ; CHECK: [[PRE:\$(r[0-9]+|lr)]] = t2SUBri12 $r0, 4,
-    ; CHECK-NEXT: t2STRT $r1, {{(killed )?}}[[PRE]], 0,
-    ; CHECK-NEXT: $r0 = t2SUBri12 $r0, 4,
-    ; CHECK-NEXT: t2STRHT $r1, $r0, 0,
-    ; CHECK-NEXT: $r0 = t2ADDri12 $r0, 2,
-    ; CHECK-NEXT: [[PAIR:\$(r[0-9]+|lr)]] = t2ADDri12 $r0, 8,
-    ; CHECK-NEXT: t2STRT $r1, [[PAIR]], 0,
-    ; CHECK-NEXT: t2STRT $r2, {{(killed )?}}[[PAIR]], 4,
-    ; CHECK-NEXT: $r0 = t2ADDri12 $r0, 8,
-    ; CHECK-NEXT: t2STRT $r1, $r0, 0,
-    ; CHECK-NEXT: t2STRT $r2, $r0, 4,
-    ; CHECK-NEXT: $r0 = t2SUBri12 $r0, 8,
+    ; CHECK:      $r0 = t2SUBri12 $r0, 4, 14
+    ; CHECK-NEXT: t2STRT $r1, $r0, 0, 14
+    ; CHECK-NEXT: t2STRHT $r1, $r0, 0, 14
+    ; CHECK-NEXT: $r0 = t2ADDri12 $r0, 2, 14
+    ; CHECK-NEXT: $r0 = t2ADDri12 $r0, 8, 14
+    ; CHECK-NEXT: t2STRT $r1, $r0, 0, 14
+    ; CHECK-NEXT: t2STRT $r2, $r0, 4, 14
+    ; CHECK-NEXT: t2STRT $r1, $r0, 0, 14
+    ; CHECK-NEXT: t2STRT $r2, $r0, 4, 14
+    ; CHECK-NEXT: $r0 = t2SUBri12 $r0, 8, 14
     early-clobber $r0 = t2STR_PRE $r1, $r0, -4, 14, $noreg :: (store (s32))
     early-clobber $r0 = t2STRH_POST $r1, $r0, 2, 14, $noreg :: (store (s16))
     early-clobber $r0 = t2STRD_PRE $r1, $r2, $r0, 8, 14, $noreg :: (store (s64))
@@ -147,24 +133,29 @@ body: |
 ---
 name: multiple
 tracksRegLiveness: true
-frameInfo:
-  isCalleeSavedInfoValid: true
 body: |
   bb.0:
     liveins: $r0, $r1, $r2, $r3
     ; CHECK-LABEL: name: multiple
-    ; CHECK: [[PAIR:\$(r[0-9]+|lr)]] = t2ADDri12 $r0, 252,
-    ; CHECK-NEXT: t2STRT $r1, [[PAIR]], 0,
-    ; CHECK-NEXT: t2STRT $r2, {{(killed )?}}[[PAIR]], 4,
-    ; CHECK-NEXT: t2STRT $r1, $r0, 0,
-    ; CHECK-NEXT: t2STRT $r2, $r0, 4,
-    ; CHECK-NEXT: t2STRT $r3, $r0, 8,
-    ; CHECK-NEXT: $r0 = t2ADDri12 $r0, 12,
-    ; CHECK-NEXT: [[DOWN:\$(r[0-9]+|lr)]] = t2SUBri12 $r0, 8,
-    ; CHECK-NEXT: t2STRT $r1, [[DOWN]], 0,
-    ; CHECK-NEXT: t2STRT $r2, {{(killed )?}}[[DOWN]], 4,
-    ; CHECK-NEXT: $r0 = t2SUBri12 $r0, 8,
+    ; CHECK:      $r12 = t2ADDri12 $r0, 252, 14
+    ; CHECK-NEXT: t2STRT $r1, $r12, 0, 14
+    ; CHECK-NEXT: t2STRT $r2, $r12, 4, 14
+    ; CHECK-NEXT: t2STRT $r1, $r0, 0, 14
+    ; CHECK-NEXT: t2STRT $r2, $r0, 4, 14
+    ; CHECK-NEXT: $r12 = t2SUBri12 $r0, 8, 14
+    ; CHECK-NEXT: t2STRT $r1, $r12, 0, 14
+    ; CHECK-NEXT: t2STRT $r2, $r12, 4, 14
+    ; CHECK-NEXT: t2STRT $r1, $r0, 0, 14
+    ; CHECK-NEXT: t2STRT $r2, $r0, 4, 14
+    ; CHECK-NEXT: t2STRT $r3, $r0, 8, 14
+    ; CHECK-NEXT: $r0 = t2ADDri12 $r0, 12, 14
+    ; CHECK-NEXT: $r3 = t2SUBri12 $r0, 8, 14
+    ; CHECK-NEXT: t2STRT $r1, $r3, 0, 14
+    ; CHECK-NEXT: t2STRT $r2, $r3, 4, 14
+    ; CHECK-NEXT: $r0 = t2SUBri12 $r0, 8, 14
     t2STRDi8 $r1, $r2, $r0, 252, 14, $noreg :: (store (s64), align 4)
+    t2STMIA $r0, 14, $noreg, $r1, $r2 :: (store (s64), align 4)
+    t2STMDB $r0, 14, $noreg, $r1, $r2 :: (store (s64), align 4)
     $r0 = t2STMIA_UPD $r0, 14, $noreg, $r1, $r2, $r3 :: (store (s96), align 4)
     $r0 = t2STMDB_UPD $r0, 14, $noreg, $r1, $r2 :: (store (s64), align 4)
     tBX_RET 14, $noreg, implicit $r0
@@ -172,139 +163,134 @@ body: |
 ---
 name: floating_point
 tracksRegLiveness: true
-frameInfo:
-  isCalleeSavedInfoValid: true
 body: |
   bb.0:
     liveins: $r0, $d0, $s2
+    ; FP bits are moved to a GPR. A D register is stored as two words in
+    ; memory order.
     ; CHECK-LABEL: name: floating_point
-    ; CHECK: [[ADDR:\$(r[0-9]+|lr)]] = t2ADDri12 $r0, 1020,
-    ; LE-NEXT: [[LO:\$(r[0-9]+|lr)]] = VMOVRS $s0,
-    ; BE-NEXT: [[LO:\$(r[0-9]+|lr)]] = VMOVRS $s1,
-    ; CHECK-NEXT: t2STRT {{(killed )?}}[[LO]], [[ADDR]], 0,
-    ; LE-NEXT: [[HI:\$(r[0-9]+|lr)]] = VMOVRS $s1,
-    ; BE-NEXT: [[HI:\$(r[0-9]+|lr)]] = VMOVRS $s0,
-    ; CHECK-NEXT: t2STRT {{(killed )?}}[[HI]], {{(killed )?}}[[ADDR]], 4,
-    ; CHECK-NEXT: [[SINGLE:\$(r[0-9]+|lr)]] = VMOVRS $s2,
-    ; CHECK-NEXT: t2STRT {{(killed )?}}[[SINGLE]], $r0, 0,
-    VSTRD $d0, $r0, 255, 14, $noreg :: (store (s64))
+    ; CHECK:      $r1 = VMOVRS $s2, 14
+    ; CHECK-NEXT: t2STRT $r1, $r0, 0, 14
+    ; CHECK-NEXT: $r2 = t2ADDri12 $r0, 1020, 14
+    ; LE-NEXT:    $r1 = VMOVRS $s0, 14
+    ; BE-NEXT:    $r1 = VMOVRS $s1, 14
+    ; CHECK-NEXT: t2STRT $r1, $r2, 0, 14
+    ; LE-NEXT:    $r1 = VMOVRS $s1, 14
+    ; BE-NEXT:    $r1 = VMOVRS $s0, 14
+    ; CHECK-NEXT: t2STRT $r1, $r2, 4, 14
+    ; LE-NEXT:    $r1 = VMOVRS $s0, 14
+    ; BE-NEXT:    $r1 = VMOVRS $s1, 14
+    ; CHECK-NEXT: t2STRT $r1, $r0, 0, 14
+    ; LE-NEXT:    $r1 = VMOVRS $s1, 14
+    ; BE-NEXT:    $r1 = VMOVRS $s0, 14
+    ; CHECK-NEXT: t2STRT $r1, $r0, 4, 14
+    ; CHECK-NEXT: $r2 = t2SUBri12 $r0, 8, 14
+    ; CHECK-NEXT: $r1 = VMOVRS $s0, 14
+    ; CHECK-NEXT: t2STRT $r1, $r2, 0, 14
+    ; CHECK-NEXT: $r1 = VMOVRS $s1, 14
+    ; CHECK-NEXT: t2STRT $r1, $r2, 4, 14
+    ; CHECK-NEXT: $r0 = t2SUBri12 $r0, 8, 14
     VSTRS $s2, $r0, 0, 14, $noreg :: (store (s32))
+    VSTRD $d0, $r0, 255, 14, $noreg :: (store (s64))
+    VSTMDIA $r0, 14, $noreg, $d0 :: (store (s64), align 4)
+    $r0 = VSTMSDB_UPD $r0, 14, $noreg, $s0, $s1 :: (store (s64), align 4)
+    tBX_RET 14, $noreg, implicit $r0
+...
+---
+name: undef_value
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r0
+    ; CHECK-LABEL: name: undef_value
+    ; CHECK:      $r1 = VMOVRS undef $s
+    ; CHECK-NEXT: t2STRT $r1, $r0, 0, 14
+    ; CHECK-NEXT: $r1 = VMOVRS undef $s
+    ; CHECK-NEXT: t2STRT $r1, $r0, 4, 14
+    VSTRD undef $d0, $r0, 0, 14, $noreg :: (store (s64))
     tBX_RET 14, $noreg
 ...
 ---
-name: fp_multiple
+name: free_register
 tracksRegLiveness: true
-frameInfo:
-  isCalleeSavedInfoValid: true
-body: |
-  bb.0:
-    liveins: $r0, $s0, $s1
-    ; CHECK-LABEL: name: fp_multiple
-    ; CHECK: [[A:\$(r[0-9]+|lr)]] = t2SUBri12 $r0, 8,
-    ; CHECK-NEXT: [[S0:\$(r[0-9]+|lr)]] = VMOVRS $s0,
-    ; CHECK-NEXT: t2STRT {{(killed )?}}[[S0]], [[A]], 0,
-    ; CHECK-NEXT: [[S1:\$(r[0-9]+|lr)]] = VMOVRS $s1,
-    ; CHECK-NEXT: t2STRT {{(killed )?}}[[S1]], {{(killed )?}}[[A]], 4,
-    ; CHECK-NEXT: $r0 = t2SUBri12 $r0, 8,
-    ; LE-NEXT: [[LOW:\$(r[0-9]+|lr)]] = VMOVRS $s0,
-    ; BE-NEXT: [[LOW:\$(r[0-9]+|lr)]] = VMOVRS $s1,
-    ; CHECK-NEXT: t2STRT {{(killed )?}}[[LOW]], $r0, 0,
-    ; LE-NEXT: [[HIGH:\$(r[0-9]+|lr)]] = VMOVRS $s1,
-    ; BE-NEXT: [[HIGH:\$(r[0-9]+|lr)]] = VMOVRS $s0,
-    ; CHECK-NEXT: t2STRT {{(killed )?}}[[HIGH]], $r0, 4,
-    ; CHECK-NEXT: $r0 = t2ADDri12 $r0, 8,
-    $r0 = VSTMSDB_UPD $r0, 14, $noreg, $s0, $s1 :: (store (s64), align 4)
-    $r0 = VSTMDIA_UPD $r0, 14, $noreg, $d0 :: (store (s64), align 4)
-    tBX_RET 14, $noreg, implicit $r0
-...
----
-name: multiple_no_writeback
-tracksRegLiveness: true
-frameInfo:
-  isCalleeSavedInfoValid: true
-body: |
-  bb.0:
-    liveins: $r0, $r1, $r2, $s0, $s1
-    ; Neither integer nor FP stores may update the base without writeback.
-    ; CHECK-LABEL: name: multiple_no_writeback
-    ; CHECK: t2STRT $r1, $r0, 0,
-    ; CHECK-NEXT: t2STRT $r2, $r0, 4,
-    ; CHECK-NEXT: [[DOWN:\$(r[0-9]+|lr)]] = t2SUBri12 $r0, 8,
-    ; CHECK-NEXT: t2STRT $r1, [[DOWN]], 0,
-    ; CHECK-NEXT: t2STRT $r2, {{(killed )?}}[[DOWN]], 4,
-    ; CHECK-NEXT: [[S0:\$(r[0-9]+|lr)]] = VMOVRS $s0,
-    ; CHECK-NEXT: t2STRT {{(killed )?}}[[S0]], $r0, 0,
-    ; CHECK-NEXT: [[S1:\$(r[0-9]+|lr)]] = VMOVRS $s1,
-    ; CHECK-NEXT: t2STRT {{(killed )?}}[[S1]], $r0, 4,
-    ; LE-NEXT: [[LOW:\$(r[0-9]+|lr)]] = VMOVRS $s0,
-    ; BE-NEXT: [[LOW:\$(r[0-9]+|lr)]] = VMOVRS $s1,
-    ; CHECK-NEXT: t2STRT {{(killed )?}}[[LOW]], $r0, 0,
-    ; LE-NEXT: [[HIGH:\$(r[0-9]+|lr)]] = VMOVRS $s1,
-    ; BE-NEXT: [[HIGH:\$(r[0-9]+|lr)]] = VMOVRS $s0,
-    ; CHECK-NEXT: t2STRT {{(killed )?}}[[HIGH]], $r0, 4,
-    ; CHECK-NEXT: tBX_RET 14 {{.*}} $noreg, implicit $r0
-    t2STMIA $r0, 14, $noreg, $r1, $r2 :: (store (s64), align 4)
-    t2STMDB $r0, 14, $noreg, $r1, $r2 :: (store (s64), align 4)
-    VSTMSIA $r0, 14, $noreg, $s0, $s1 :: (store (s64), align 4)
-    VSTMDIA $r0, 14, $noreg, $d0 :: (store (s64), align 4)
-    tBX_RET 14, $noreg, implicit $r0
-...
----
-name: emergency_spill
-tracksRegLiveness: true
-frameInfo:
-  stackSize: 16
-  isCalleeSavedInfoValid: true
-stack:
-  - { id: 0, type: spill-slot, offset: -16, size: 4, alignment: 4 }
-  - { id: 1, type: spill-slot, offset: -12, size: 4, alignment: 4 }
-  - { id: 2, type: spill-slot, offset: -8, size: 4, alignment: 4 }
-machineFunctionInfo:
-  palisadeSpillSlots: [ 1, 2 ]
 body: |
   bb.0:
     liveins: $r0, $r1, $r2, $r3, $r4, $r5, $r6, $r7, $r8, $r9, $r10, $r11, $r12, $lr
-    ; All registers are live. Scavenging must save and restore the temporary
-    ; with a privileged store into its compiler-owned native stack slot.
-    ; An earlier scavenger's spill in slot 0 is still live across this store.
-    ; CHECK-LABEL: name: emergency_spill
-    ; CHECK: t2STRi12 $r2, $sp, 0, 14 {{.*}}%stack.0)
-    ; CHECK-NEXT: t2STRi12 killed [[TMP:\$(r[0-9]+|lr)]], $sp, 4, 14 {{.*}}%stack.1)
-    ; CHECK-NEXT: [[TMP]] = t2ADDri12 $r0, 1024,
-    ; CHECK-NEXT: t2STRT $r1, {{(killed )?}}[[TMP]], 0,
-    ; CHECK-NEXT: [[TMP]] = t2LDRi12 $sp, 4, 14 {{.*}}%stack.1)
-    ; CHECK-NEXT: t2STRT $r2, $r0, 0,
-    ; CHECK-NEXT: $r2 = t2LDRi12 $sp, 0, 14 {{.*}}%stack.0)
+    ; r2 is dead after the store, so it needs no save.
+    ; CHECK-LABEL: name: free_register
+    ; CHECK:      $r2 = t2ADDri12 $r0, 1024, 14
+    ; CHECK-NEXT: t2STRT $r1, $r2, 0, 14
     ; CHECK-NEXT: tBX_RET
-    t2STRi12 $r2, $sp, 0, 14, $noreg :: (store (s32) into %stack.0)
     t2STRi12 $r1, $r0, 1024, 14, $noreg :: (store (s32))
-    t2STRT $r2, $r0, 0, 14, $noreg :: (store (s32))
-    $r2 = t2LDRi12 $sp, 0, 14, $noreg :: (load (s32) from %stack.0)
+    tBX_RET 14, $noreg
+...
+---
+name: save_one
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r0, $r1, $r2, $r3, $r4, $r5, $r6, $r7, $r8, $r9, $r10, $r11, $r12, $lr
+    ; Every GPR is live, so the address temporary is pushed and popped.
+    ; CHECK-LABEL: name: save_one
+    ; CHECK:      early-clobber $sp = t2STR_PRE $r2, $sp, -4, 14
+    ; CHECK-NEXT: $r2 = t2ADDri12 $r0, 1024, 14
+    ; CHECK-NEXT: t2STRT $r1, $r2, 0, 14
+    ; CHECK-NEXT: $r2, $sp = t2LDR_POST $sp, 4, 14
+    ; CHECK-NEXT: tBX_RET
+    t2STRi12 $r1, $r0, 1024, 14, $noreg :: (store (s32))
     tBX_RET 14, $noreg, implicit $r0, implicit $r1, implicit $r2, implicit $r3, implicit $r4, implicit $r5, implicit $r6, implicit $r7, implicit $r8, implicit $r9, implicit $r10, implicit $r11, implicit $r12, implicit $lr
 ...
 ---
-name: fp_emergency_spills
+name: save_two
 tracksRegLiveness: true
-frameInfo:
-  stackSize: 8
-  isCalleeSavedInfoValid: true
-stack:
-  - { id: 0, type: spill-slot, offset: -8, size: 4, alignment: 4 }
-  - { id: 1, type: spill-slot, offset: -4, size: 4, alignment: 4 }
-machineFunctionInfo:
-  palisadeSpillSlots: [ 0, 1 ]
 body: |
   bb.0:
     liveins: $r0, $r1, $r2, $r3, $r4, $r5, $r6, $r7, $r8, $r9, $r10, $r11, $r12, $lr, $s0
-    ; The address and the FP bits need distinct temporaries and spill slots.
-    ; CHECK-LABEL: name: fp_emergency_spills
-    ; CHECK: t2STRi12 killed [[BITS:\$(r[0-9]+|lr)]], $sp, 0,
-    ; CHECK-NEXT: t2STRi12 killed [[ADDR:\$(r[0-9]+|lr)]], $sp, 4,
-    ; CHECK: [[ADDR]] = t2ADDri12 $r0, 1020,
-    ; CHECK-NEXT: [[BITS]] = VMOVRS $s0,
-    ; CHECK-NEXT: t2STRT {{(killed )?}}[[BITS]], {{(killed )?}}[[ADDR]], 0,
-    ; CHECK-DAG: [[ADDR]] = t2LDRi12 $sp, 4,
-    ; CHECK-DAG: [[BITS]] = t2LDRi12 $sp, 0,
+    ; The data and address temporaries are pushed and popped together.
+    ; CHECK-LABEL: name: save_two
+    ; CHECK:      $sp = t2STMDB_UPD $sp, 14 {{.*}}, $r1, $r2
+    ; CHECK-NEXT: $r2 = t2ADDri12 $r0, 1020, 14
+    ; CHECK-NEXT: $r1 = VMOVRS $s0, 14
+    ; CHECK-NEXT: t2STRT $r1, $r2, 0, 14
+    ; CHECK-NEXT: $sp = t2LDMIA_UPD $sp, 14 {{.*}}, def $r1, def $r2
+    ; CHECK-NEXT: tBX_RET
     VSTRS $s0, $r0, 255, 14, $noreg :: (store (s32))
     tBX_RET 14, $noreg, implicit $r0, implicit $r1, implicit $r2, implicit $r3, implicit $r4, implicit $r5, implicit $r6, implicit $r7, implicit $r8, implicit $r9, implicit $r10, implicit $r11, implicit $r12, implicit $lr
+...
+---
+name: sp_relative
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r0, $r1, $r2, $r3, $r4, $r5, $r6, $r7, $r8, $r9, $r10, $r11, $r12, $lr
+    ; Offsets from SP, and a stored SP value, are corrected for the push.
+    ; CHECK-LABEL: name: sp_relative
+    ; CHECK:      $sp = t2STMDB_UPD $sp, 14 {{.*}}, $r0, $r1
+    ; CHECK-NEXT: $r0 = t2ADDri12 $sp, 8, 14
+    ; CHECK-NEXT: $r1 = t2ADDri12 $sp, 260, 14
+    ; CHECK-NEXT: t2STRT $r0, $r1, 0, 14
+    ; CHECK-NEXT: $sp = t2LDMIA_UPD $sp, 14 {{.*}}, def $r0, def $r1
+    ; CHECK-NEXT: early-clobber $sp = t2STR_PRE $r1, $sp, -4, 14
+    ; CHECK-NEXT: $r1 = t2ADDri12 $sp, 4095, 14
+    ; CHECK-NEXT: $r1 = t2ADDri12 $r1, 4, 14
+    ; CHECK-NEXT: t2STRT $r0, $r1, 0, 14
+    ; CHECK-NEXT: $r1, $sp = t2LDR_POST $sp, 4, 14
+    t2STRi12 $sp, $sp, 252, 14, $noreg :: (store (s32))
+    t2STRi12 $r0, $sp, 4095, 14, $noreg :: (store (s32), align 1)
+    tBX_RET 14, $noreg, implicit $r0, implicit $r1, implicit $r2, implicit $r3, implicit $r4, implicit $r5, implicit $r6, implicit $r7, implicit $r8, implicit $r9, implicit $r10, implicit $r11, implicit $r12, implicit $lr
+...
+---
+name: predicated
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r0, $r1, $r2, $r3, $r4, $r5, $r6, $r7, $r8, $r9, $r10, $r11, $r12, $lr, $cpsr
+    ; The push and pop are unconditional; the lowered store keeps its predicate.
+    ; CHECK-LABEL: name: predicated
+    ; CHECK:      early-clobber $sp = t2STR_PRE $r2, $sp, -4, 14
+    ; CHECK-NEXT: $r2 = t2ADDrs $r0, $r1, 18, 1 {{.*}} $cpsr
+    ; CHECK-NEXT: t2STRT $r0, $r2, 0, 1 {{.*}} $cpsr
+    ; CHECK-NEXT: $r2, $sp = t2LDR_POST $sp, 4, 14
+    t2STRs $r0, $r0, $r1, 2, 1, $cpsr :: (store (s32))
+    tBX_RET 14, $noreg, implicit $r0, implicit $r1, implicit $r2, implicit $r3, implicit $r4, implicit $r5, implicit $r6, implicit $r7, implicit $r8, implicit $r9, implicit $r10, implicit $r11, implicit $r12, implicit $lr, implicit $cpsr
 ...

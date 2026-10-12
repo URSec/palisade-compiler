@@ -28,16 +28,15 @@
 
 #include "ARM.h"
 #include "ARMBaseInstrInfo.h"
-#include "ARMMachineFunctionInfo.h"
 #include "ARMSubtarget.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/CodeGen/LiveRegUnits.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineMemOperand.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/CodeGen/PseudoSourceValue.h"
-#include "llvm/CodeGen/RegisterScavenging.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/Support/ErrorHandling.h"
 #include <cstdlib>
@@ -135,61 +134,178 @@ class StoreLowering {
   MachineInstr &MI;
   MachineFunction &MF;
   const ARMBaseInstrInfo &TII;
+  const TargetRegisterInfo &TRI;
+  const LiveRegUnits &Live;
+  LiveRegUnits Unavailable;
   ARMCC::CondCodes Pred;
   Register PredReg;
+  Register AddressReg, DataReg;
+  SmallVector<Register, NumTemporaries> Saved;
 
   Register temporary() {
-    MF.getProperties().resetNoVRegs();
-    return MF.getRegInfo().createVirtualRegister(&ARM::GPRRegClass);
+    // Prefer dead registers; otherwise save a victim that the original store
+    // neither reads nor defines. Reserved registers include SP, PC and FP.
+    for (bool Spill : {false, true}) {
+      for (MCPhysReg Reg : ARM::rGPRRegClass) {
+        if (MF.getRegInfo().isReserved(Reg) || !Unavailable.available(Reg) ||
+            (!Spill && !Live.available(Reg)))
+          continue;
+        Unavailable.addReg(Reg);
+        if (Spill)
+          Saved.push_back(Reg);
+        return Reg;
+      }
+    }
+    reportUnsupportedStore(MI, "no scratch register outside store operands");
   }
 
   MachineInstrBuilder build(unsigned Opcode) {
     return BuildMI(*MI.getParent(), MI, MI.getDebugLoc(), TII.get(Opcode));
   }
 
-  // All offsets in the supported store encodings fit an ADDW/SUBW immediate.
-  // A separate result avoids corrupting the value when source == base/index.
-  void addOffset(Register Dest, Register Base, int Offset) {
-    assert(Offset >= -4095 && Offset <= 4095);
-    build(Offset < 0 ? ARM::t2SUBri12 : ARM::t2ADDri12)
-        .addDef(Dest)
-        .addReg(Base)
-        .addImm(std::abs(Offset))
-        .add(predOps(Pred, PredReg));
+  // Splitting an undef FP operand into S registers must retain its undef flag.
+  RegState useFlags(Register Reg) const {
+    bool Undef = false;
+    for (const MachineOperand &MO : MI.operands()) {
+      if (!MO.isReg() || !MO.isUse() || !MO.getReg() ||
+          !TRI.regsOverlap(Reg, MO.getReg()))
+        continue;
+      if (!MO.isUndef())
+        return {};
+      Undef = true;
+    }
+    return getUndefRegState(Undef);
   }
 
-  Register offsetAddress(Register Base, int Offset) {
-    if (!Offset)
-      return Base;
-    Register Address = temporary();
-    addOffset(Address, Base, Offset);
-    return Address;
+  unsigned pushedBytes() const { return 4 * Saved.size(); }
+
+  // The save and the restore both access the words just below the SP that
+  // was current before the save.
+  MachineMemOperand *savedWords(MachineMemOperand::Flags Flags) {
+    return MF.getMachineMemOperand(
+        MachinePointerInfo::getStack(MF, -int(pushedBytes())), Flags,
+        pushedBytes(), Align(4));
+  }
+
+  // The wide STM/LDM encodings require at least two registers. A single
+  // register uses the indexed STR/LDR encoding instead.
+  void saveTemporaries() {
+    if (Saved.empty())
+      return;
+    llvm::sort(Saved, [&](Register A, Register B) {
+      return TRI.getEncodingValue(A) < TRI.getEncodingValue(B);
+    });
+    if (Saved.size() == 1) {
+      build(ARM::t2STR_PRE)
+          .addDef(ARM::SP)
+          .addReg(Saved.front())
+          .addReg(ARM::SP)
+          .addImm(-4)
+          .add(predOps(ARMCC::AL))
+          .addMemOperand(savedWords(MachineMemOperand::MOStore));
+      return;
+    }
+    auto Save = build(ARM::t2STMDB_UPD)
+                    .addDef(ARM::SP)
+                    .addReg(ARM::SP)
+                    .add(predOps(ARMCC::AL));
+    for (Register Reg : Saved)
+      Save.addReg(Reg);
+    Save.addMemOperand(savedWords(MachineMemOperand::MOStore));
+  }
+
+  void restoreTemporaries() {
+    if (Saved.empty())
+      return;
+    if (Saved.size() == 1) {
+      build(ARM::t2LDR_POST)
+          .addDef(Saved.front())
+          .addDef(ARM::SP)
+          .addReg(ARM::SP)
+          .addImm(4)
+          .add(predOps(ARMCC::AL))
+          .addMemOperand(savedWords(MachineMemOperand::MOLoad));
+      return;
+    }
+    auto Restore = build(ARM::t2LDMIA_UPD)
+                       .addDef(ARM::SP)
+                       .addReg(ARM::SP)
+                       .add(predOps(ARMCC::AL));
+    for (Register Reg : Saved)
+      Restore.addDef(Reg);
+    Restore.addMemOperand(savedWords(MachineMemOperand::MOLoad));
+  }
+
+  static bool fitsOffset(int Offset, int Span) {
+    return Offset >= 0 && Offset + Span <= 255;
+  }
+
+  // Decide on both temporaries before emitting any instructions. Saving the
+  // data temporary can itself force an SP-relative address out of STRT range.
+  void prepare(ArrayRef<Register> Values, Register Base, int &Offset,
+               int Span = 0, bool NeedsAddress = false) {
+    // The compiler never stores below SP, where the temporaries are saved.
+    if (Base == ARM::SP && Offset < 0)
+      reportUnsupportedStore(MI, "store below SP");
+    // STRT can store neither SP nor FP registers.
+    if (llvm::any_of(Values, [](Register Value) {
+          return Value == ARM::SP || !ARM::GPRRegClass.contains(Value);
+        }))
+      DataReg = temporary();
+    int Adjusted = Offset + (Base == ARM::SP ? pushedBytes() : 0);
+    if (NeedsAddress || !fitsOffset(Adjusted, Span))
+      AddressReg = temporary();
+    if (Base == ARM::SP)
+      Offset += pushedBytes();
+    saveTemporaries();
+  }
+
+  // A separate result avoids corrupting the value when source == base/index.
+  void addOffset(Register Dest, Register Base, int Offset) {
+    // Accounting for a push can take a maximal SP offset beyond ADDW range.
+    if (Offset > 4095) {
+      addOffset(Dest, Base, 4095);
+      addOffset(Dest, Dest, Offset - 4095);
+      return;
+    }
+    assert(Offset >= -4095);
+    build(Offset < 0 ? ARM::t2SUBri12 : ARM::t2ADDri12)
+        .addDef(Dest)
+        .addReg(Base, useFlags(Base))
+        .addImm(std::abs(Offset))
+        .add(predOps(Pred, PredReg));
   }
 
   // Rebase once so that stores from Offset to Offset + Span fit the unsigned
   // 8-bit offset of STRT.
   void fitOffset(Register &Base, int &Offset, int Span = 0) {
-    if (Offset >= 0 && Offset + Span <= 255)
+    if (fitsOffset(Offset, Span))
       return;
-    Base = offsetAddress(Base, Offset);
+    assert(AddressReg && "address temporary was not prepared");
+    addOffset(AddressReg, Base, Offset);
+    Base = AddressReg;
     Offset = 0;
   }
 
   void emitStore(unsigned Opcode, Register Value, Register Base, int Offset) {
     // STR can store SP (for example, llvm.stacksave), but STRT requires rGPR.
     if (Value == ARM::SP) {
-      Value = temporary();
-      build(ARM::tMOVr)
-          .addDef(Value)
-          .addReg(ARM::SP)
-          .add(predOps(Pred, PredReg));
+      assert(DataReg && "data temporary was not prepared");
+      Value = DataReg;
+      if (pushedBytes())
+        addOffset(Value, ARM::SP, pushedBytes());
+      else
+        build(ARM::tMOVr)
+            .addDef(Value)
+            .addReg(ARM::SP, useFlags(ARM::SP))
+            .add(predOps(Pred, PredReg));
     }
     fitOffset(Base, Offset);
     // Retain the original memory references conservatively on split stores.
     // A combined instruction's MMO order need not describe its register order.
     build(Opcode)
-        .addReg(Value)
-        .addReg(Base)
+        .addReg(Value, useFlags(Value))
+        .addReg(Base, useFlags(Base))
         .addImm(Offset)
         .add(predOps(Pred, PredReg))
         .setMemRefs(MI.memoperands())
@@ -198,15 +314,17 @@ class StoreLowering {
 
   // Store the bits of an S register; VMOVRS does not perform a conversion.
   void emitFPWord(Register Word, Register Base, int Offset) {
-    Register Bits = temporary();
-    build(ARM::VMOVRS).addDef(Bits).addReg(Word).add(predOps(Pred, PredReg));
-    emitStore(ARM::t2STRT, Bits, Base, Offset);
+    assert(DataReg && "data temporary was not prepared");
+    build(ARM::VMOVRS)
+        .addDef(DataReg)
+        .addReg(Word, useFlags(Word))
+        .add(predOps(Pred, PredReg));
+    emitStore(ARM::t2STRT, DataReg, Base, Offset);
   }
 
   void emitFPStore(Register Value, Register Base, int Offset) {
     if (!ARM::DPRRegClass.contains(Value))
       return emitFPWord(Value, Base, Offset);
-    const TargetRegisterInfo &TRI = *MF.getSubtarget().getRegisterInfo();
     Register Lo = TRI.getSubReg(Value, ARM::ssub_0);
     Register Hi = TRI.getSubReg(Value, ARM::ssub_1);
     assert(Lo && Hi && "M-profile D registers consist of two S registers");
@@ -217,21 +335,27 @@ class StoreLowering {
   }
 
   void lowerImmediate(unsigned Opcode, unsigned Scale = 1) {
-    emitStore(Opcode, MI.getOperand(0).getReg(), MI.getOperand(1).getReg(),
-              MI.getOperand(2).getImm() * Scale);
+    Register Value = MI.getOperand(0).getReg();
+    Register Base = MI.getOperand(1).getReg();
+    int Offset = MI.getOperand(2).getImm() * Scale;
+    prepare(Value, Base, Offset);
+    emitStore(Opcode, Value, Base, Offset);
   }
 
   void lowerRegisterOffset(unsigned Opcode, bool Shifted) {
-    Register Address = temporary();
+    Register Value = MI.getOperand(0).getReg();
+    Register Base = MI.getOperand(1).getReg();
+    int Offset = 0;
+    prepare(Value, Base, Offset, 0, /*NeedsAddress=*/true);
     build(ARM::t2ADDrs)
-        .addDef(Address)
-        .addReg(MI.getOperand(1).getReg())
-        .addReg(MI.getOperand(2).getReg())
+        .addDef(AddressReg)
+        .addReg(Base, useFlags(Base))
+        .addReg(MI.getOperand(2).getReg(), useFlags(MI.getOperand(2).getReg()))
         .addImm(ARM_AM::getSORegOpc(ARM_AM::lsl,
                                     Shifted ? MI.getOperand(3).getImm() : 0))
         .add(predOps(Pred, PredReg))
         .add(condCodeOp());
-    emitStore(Opcode, MI.getOperand(0).getReg(), Address, 0);
+    emitStore(Opcode, Value, AddressReg, Offset);
   }
 
   void checkWriteback(Register Base) {
@@ -246,20 +370,30 @@ class StoreLowering {
     Register Base = MI.getOperand(BaseOp).getReg();
     int Offset = MI.getOperand(BaseOp + 1).getImm();
     checkWriteback(Base);
-    Register Address = PreIndex ? offsetAddress(Base, Offset) : Base;
-    emitStore(Opcode, MI.getOperand(1).getReg(), Address, 0);
+    SmallVector<Register, 2> Values = {MI.getOperand(1).getReg()};
     if (Double)
-      emitStore(Opcode, MI.getOperand(2).getReg(), Address, 4);
-    // Update only after the data has been read, including source/base aliases.
-    addOffset(MI.getOperand(0).getReg(), Base, Offset);
+      Values.push_back(MI.getOperand(2).getReg());
+    int StoreOffset = 0;
+    prepare(Values, Base, StoreOffset, Double ? 4 : 0);
+    // A writeback store of its own base is UNPREDICTABLE, so updating the base
+    // first cannot change the stored data.
+    if (PreIndex)
+      addOffset(Base, Base, Offset);
+    emitStore(Opcode, Values[0], Base, 0);
+    if (Double)
+      emitStore(Opcode, Values[1], Base, 4);
+    if (!PreIndex)
+      addOffset(Base, Base, Offset);
   }
 
   void lowerDouble() {
     Register Base = MI.getOperand(2).getReg();
     int Offset = MI.getOperand(3).getImm();
+    Register Values[] = {MI.getOperand(0).getReg(), MI.getOperand(1).getReg()};
+    prepare(Values, Base, Offset, 4);
     fitOffset(Base, Offset, 4);
-    emitStore(ARM::t2STRT, MI.getOperand(0).getReg(), Base, Offset);
-    emitStore(ARM::t2STRT, MI.getOperand(1).getReg(), Base, Offset + 4);
+    emitStore(ARM::t2STRT, Values[0], Base, Offset);
+    emitStore(ARM::t2STRT, Values[1], Base, Offset + 4);
   }
 
   void lowerFP() {
@@ -269,7 +403,9 @@ class StoreLowering {
     int Offset = ARM_AM::getAM5Offset(Imm) * 4;
     if (ARM_AM::getAM5Op(Imm) == ARM_AM::sub)
       Offset = -Offset;
-    fitOffset(Base, Offset, ARM::DPRRegClass.contains(Value) ? 4 : 0);
+    int Span = ARM::DPRRegClass.contains(Value) ? 4 : 0;
+    prepare(Value, Base, Offset, Span);
+    fitOffset(Base, Offset, Span);
     emitFPStore(Value, Base, Offset);
   }
 
@@ -280,16 +416,18 @@ class StoreLowering {
     if (Writeback)
       checkWriteback(Base);
     // The register list follows the base and the two predicate operands.
-    auto Values = llvm::drop_begin(MI.explicit_operands(),
-                                   MI.findFirstPredOperandIdx() + 2);
+    SmallVector<Register, 16> Values;
+    for (const MachineOperand &MO : llvm::drop_begin(
+             MI.explicit_operands(), MI.findFirstPredOperandIdx() + 2))
+      Values.push_back(MO.getReg());
     int Size = 0;
-    for (const MachineOperand &MO : Values)
-      Size += ARM::DPRRegClass.contains(MO.getReg()) ? 8 : 4;
+    for (Register Value : Values)
+      Size += ARM::DPRRegClass.contains(Value) ? 8 : 4;
     Register Address = Base;
     int Offset = Decrement ? -Size : 0;
+    prepare(Values, Base, Offset, Size - 4);
     fitOffset(Address, Offset, Size - 4);
-    for (const MachineOperand &MO : Values) {
-      Register Value = MO.getReg();
+    for (Register Value : Values) {
       if (ARM::GPRRegClass.contains(Value))
         emitStore(ARM::t2STRT, Value, Address, Offset);
       else
@@ -301,15 +439,26 @@ class StoreLowering {
   }
 
 public:
-  explicit StoreLowering(MachineInstr &MI)
+  StoreLowering(MachineInstr &MI, const LiveRegUnits &Live)
       : MI(MI), MF(*MI.getMF()),
-        TII(*MF.getSubtarget<ARMSubtarget>().getInstrInfo()) {
+        TII(*MF.getSubtarget<ARMSubtarget>().getInstrInfo()),
+        TRI(*MF.getSubtarget().getRegisterInfo()), Live(Live),
+        Unavailable(TRI) {
     Pred = getInstrPredicate(MI, PredReg);
+    for (const MachineOperand &MO : MI.operands())
+      if (MO.isReg() && MO.getReg())
+        Unavailable.addReg(MO.getReg());
   }
 
+  void run() {
+    lower();
+    restoreTemporaries();
+  }
+
+private:
   // Cases cite the Armv8-M Architecture Reference Manual (DDI0553B.z),
   // section C2.4, by instruction and encoding.
-  void run() {
+  void lower() {
     switch (MI.getOpcode()) {
     // C2.4.224 STR (immediate): T1, T2 (SP base), T3, T4.
     case ARM::tSTRi:
@@ -401,23 +550,6 @@ public:
   }
 };
 
-// Assign physical registers to lowering temporaries, spilling into the
-// reserved slots only when no register is free.
-void scavengeTemporaries(MachineFunction &MF) {
-  if (MF.getProperties().hasNoVRegs())
-    return;
-  // The normal pipeline runs after PEI; reject standalone invocation without
-  // callee-saved information.
-  if (!MF.getFrameInfo().isCalleeSavedInfoValid())
-    report_fatal_error(
-        "Palisade store hardening requires valid callee-saved information",
-        false);
-  RegScavenger RS;
-  for (int FI : MF.getInfo<ARMFunctionInfo>()->getPalisadeSpillSlots())
-    RS.addScavengingFrameIndex(FI);
-  scavengeFrameVirtualRegs(MF, RS);
-}
-
 class ARMPalisadeStoreHardening : public MachineFunctionPass {
 public:
   static char ID;
@@ -450,36 +582,45 @@ bool ARMPalisadeStoreHardening::runOnMachineFunction(MachineFunction &MF) {
     report_fatal_error("Palisade store hardening requires Thumb-2 M-profile",
                        false);
 
-  // Collect the original stores before inserting or erasing instructions.
-  SmallVector<MachineInstr *, 32> Stores;
+  const TargetRegisterInfo &TRI = *ST.getRegisterInfo();
+  const TargetInstrInfo &TII = *ST.getInstrInfo();
+
+  // Collect the original stores, with the registers live at each, before
+  // inserting or erasing instructions.
+  SmallVector<std::pair<MachineInstr *, LiveRegUnits>, 32> Stores;
   for (MachineBasicBlock &MBB : MF) {
-    for (MachineInstr &MI : MBB) {
+    LiveRegUnits Live(TRI);
+    Live.addLiveOuts(MBB);
+    // Standalone MIR may lack callee-save information. In that case none of
+    // the callee-saved registers can be assumed free.
+    if (!MF.getFrameInfo().isCalleeSavedInfoValid())
+      for (const MCPhysReg *Reg = MF.getRegInfo().getCalleeSavedRegs();
+           Reg && *Reg; ++Reg)
+        Live.addReg(*Reg);
+
+    for (MachineInstr &MI : llvm::reverse(MBB)) {
+      if (MI.isDebugInstr())
+        continue;
+      // Conditional definitions cannot kill values live on the false path.
+      if (TII.isPredicated(MI))
+        Live.accumulate(MI);
+      else
+        Live.stepBackward(MI);
       if (!needsHardening(MI))
         continue;
       if (getStoreDomain(MI) == StoreDomain::Mixed)
         reportUnsupportedStore(MI, "store crosses protection domains");
-      Stores.push_back(&MI);
+      Stores.emplace_back(&MI, Live);
     }
   }
 
-  for (MachineInstr *MI : Stores) {
-    StoreLowering(*MI).run();
+  // Lowering a store does not change the registers live at any other store:
+  // its temporaries are dead there, or saved and restored around it.
+  for (auto &[MI, Live] : Stores) {
+    StoreLowering(*MI, Live).run();
     MI->eraseFromParent();
   }
-  scavengeTemporaries(MF);
   return !Stores.empty();
-}
-
-void llvm::reservePalisadeSpillSlots(MachineFunction &MF) {
-  if (llvm::none_of(MF, [](const MachineBasicBlock &MBB) {
-        return llvm::any_of(MBB, needsHardening);
-      }))
-    return;
-  // Do not register these with PEI's scavenger: its spills can be live across
-  // the store we later expand. The late scavenger needs its own slots.
-  for (unsigned I = 0; I != NumTemporaries; ++I)
-    MF.getInfo<ARMFunctionInfo>()->addPalisadeSpillSlot(
-        MF.getFrameInfo().CreateSpillStackObject(4, Align(4)));
 }
 
 FunctionPass *llvm::createARMPalisadeStoreHardeningPass() {

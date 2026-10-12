@@ -79,10 +79,6 @@ static cl::opt<bool> EnablePalisadeStoreHardening(
     "arm-enable-palisade-store-hardening", cl::Hidden, cl::init(false),
     cl::desc("Use unprivileged stores for Palisade ordinary storage"));
 
-bool llvm::isARMPalisadeStoreHardeningEnabled() {
-  return EnablePalisadeStoreHardening;
-}
-
 // FIXME: Unify control over GlobalMerge.
 static cl::opt<cl::boolOrDefault>
 EnableGlobalMerge("arm-global-merge", cl::Hidden,

@@ -56,8 +56,6 @@ createARMInstructionSelector(const ARMBaseTargetMachine &TM, const ARMSubtarget 
 Pass *createMVEGatherScatterLoweringPass();
 FunctionPass *createARMSLSHardeningPass();
 FunctionPass *createARMPalisadeStoreHardeningPass();
-bool isARMPalisadeStoreHardeningEnabled();
-void reservePalisadeSpillSlots(MachineFunction &MF);
 FunctionPass *createARMIndirectThunks();
 Pass *createMVELaneInterleavingPass();
 FunctionPass *createARMFixCortexA57AES1742098Pass();

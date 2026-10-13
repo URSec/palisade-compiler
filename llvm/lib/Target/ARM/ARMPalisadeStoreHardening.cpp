@@ -114,8 +114,6 @@ bool needsHardening(const MachineInstr &MI) {
          Domain == StoreDomain::Ordinary;
 }
 
-
-
 // Transforming a privileged store into unprivileged store.
 // The transformation requires more work than replacing opcode.
 // In Armv8-M, privileged store (STR) is more capable than
@@ -123,9 +121,10 @@ bool needsHardening(const MachineInstr &MI) {
 // The transformation needs to work around the following cases due to
 // the limitation of STRT:
 // 1. operand uses a large offset other than 0-255.
-// 2. instruction update its base as well such as, str r1, [r0, #4]!, [r0], #4
-// 3. store multiple registers, such as STRD, STM
-// 4. store SP, or FP register, such as VSTR s0
+// 2. operand uses SP related offset.
+// 3. instruction update its base as well such as, str r1, [r0, #4]!, [r0], #4
+// 4. store multiple registers, such as STRD, STM
+// 5. operate on FP register, such as VSTR s0
 // Additionally,
 // transforming to STRT might add instructions, thus it requires free temporary
 // registers to encode or,

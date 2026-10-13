@@ -77,7 +77,7 @@ EnableARMLoadStoreOpt("arm-load-store-opt", cl::Hidden,
 
 static cl::opt<bool> EnablePalisadeStoreHardening(
     "arm-enable-palisade-store-hardening", cl::Hidden, cl::init(false),
-    cl::desc("Use unprivileged stores for Palisade ordinary storage"));
+    cl::desc("Palisade compiler use unprivileged stores for ordinary storage"));
 
 // FIXME: Unify control over GlobalMerge.
 static cl::opt<cl::boolOrDefault>
@@ -498,8 +498,11 @@ void ARMPassConfig::addPreSched2() {
   // Emit KCFI checks for indirect calls.
   addPass(createKCFIPass());
 
-  // Frame indices and store pseudos have been lowered. Harden stores before
-  // if-conversion and IT-block formation, which must see the expanded sequence.
+  // Put store hardening pass after load-store optimization and pseudos
+  // expansion in order to operate on finalized store instruction.
+  // Put store hardening pass before IT-block conversion because this pass may
+  // change single store instruction to multiple that later pass should
+  // preserve.
   if (EnablePalisadeStoreHardening)
     addPass(createARMPalisadeStoreHardeningPass());
 

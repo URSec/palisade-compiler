@@ -75,6 +75,10 @@ EnableARMLoadStoreOpt("arm-load-store-opt", cl::Hidden,
                       cl::desc("Enable ARM load/store optimization pass"),
                       cl::init(true));
 
+static cl::opt<bool> EnablePalisadeStoreHardening(
+    "arm-enable-palisade-store-hardening", cl::Hidden, cl::init(false),
+    cl::desc("Palisade compiler use unprivileged stores for ordinary storage"));
+
 // FIXME: Unify control over GlobalMerge.
 static cl::opt<cl::boolOrDefault>
 EnableGlobalMerge("arm-global-merge", cl::Hidden,
@@ -109,6 +113,7 @@ extern "C" LLVM_ABI LLVM_EXTERNAL_VISIBILITY void LLVMInitializeARMTarget() {
   initializeARMBlockPlacementPass(Registry);
   initializeMVEGatherScatterLoweringPass(Registry);
   initializeARMSLSHardeningPass(Registry);
+  initializeARMPalisadeStoreHardeningPass(Registry);
   initializeMVELaneInterleavingPass(Registry);
   initializeARMFixCortexA57AES1742098Pass(Registry);
   initializeARMDAGToDAGISelLegacyPass(Registry);
@@ -492,6 +497,14 @@ void ARMPassConfig::addPreSched2() {
 
   // Emit KCFI checks for indirect calls.
   addPass(createKCFIPass());
+
+  // Put store hardening pass after load-store optimization and pseudos
+  // expansion in order to operate on finalized store instruction.
+  // Put store hardening pass before IT-block conversion because this pass may
+  // change single store instruction to multiple that later pass should
+  // preserve.
+  if (EnablePalisadeStoreHardening)
+    addPass(createARMPalisadeStoreHardeningPass());
 
   if (getOptLevel() != CodeGenOptLevel::None) {
     // When optimising for size, always run the Thumb2SizeReduction pass before

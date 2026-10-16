@@ -21,6 +21,7 @@ add_llvm_component_library(LLVMInstrumentation
   PGOInstrumentation.cpp
   PGOMemOPSizeOpt.cpp
   PalisadeGlobalSegregation.cpp
+  PalisadeLocalPromote.cpp
   SanitizerCoverage.cpp
   SanitizerBinaryMetadata.cpp
   ValueProfileCollector.cpp

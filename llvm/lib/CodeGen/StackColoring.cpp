@@ -1319,6 +1319,7 @@ bool StackColoring::run(MachineFunction &Func, bool OnlyRemoveMarkers) {
 
         // Palisade: protected and ordinary locals live in different address
         // spaces and must not share a slot.
+        // TODO: check if this guard is deadcode after stack split.
         if (MFI->getObjectAllocation(FirstSlot)->getAddressSpace() !=
             MFI->getObjectAllocation(SecondSlot)->getAddressSpace())
           continue;

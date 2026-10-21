@@ -503,7 +503,7 @@ void ARMPassConfig::addPreSched2() {
   // Put store hardening pass before IT-block conversion because this pass may
   // change single store instruction to multiple that later pass should
   // preserve.
-  if (EnablePalisadeStoreHardening)
+  if (EnablePalisadeStoreHardening || TM->Options.EnablePalisadeStoreHardening)
     addPass(createARMPalisadeStoreHardeningPass());
 
   if (getOptLevel() != CodeGenOptLevel::None) {

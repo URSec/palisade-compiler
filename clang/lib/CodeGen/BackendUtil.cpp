@@ -82,6 +82,9 @@
 #include "llvm/Transforms/Instrumentation/MemorySanitizer.h"
 #include "llvm/Transforms/Instrumentation/NumericalStabilitySanitizer.h"
 #include "llvm/Transforms/Instrumentation/PGOInstrumentation.h"
+#include "llvm/Transforms/Instrumentation/PalisadeGlobalSegregation.h"
+#include "llvm/Transforms/Instrumentation/PalisadeLocalPromote.h"
+#include "llvm/Transforms/Instrumentation/PalisadeStackSplit.h"
 #include "llvm/Transforms/Instrumentation/RealtimeSanitizer.h"
 #include "llvm/Transforms/Instrumentation/SanitizerBinaryMetadata.h"
 #include "llvm/Transforms/Instrumentation/SanitizerCoverage.h"
@@ -375,6 +378,13 @@ static std::string flattenClangCommandLine(ArrayRef<std::string> Args,
   return FlatCmdLine;
 }
 
+// Palisade transformation runs at -O2.
+static bool shouldRunPalisade(const LangOptions &LangOpts,
+                              const CodeGenOptions &CodeGenOpts) {
+  return LangOpts.Palisade && CodeGenOpts.OptimizationLevel == 2 &&
+         !CodeGenOpts.OptimizeSize && !CodeGenOpts.DisableLLVMPasses;
+}
+
 static bool initTargetOptions(const CompilerInstance &CI,
                               DiagnosticsEngine &Diags,
                               llvm::TargetOptions &Options) {
@@ -382,6 +392,8 @@ static bool initTargetOptions(const CompilerInstance &CI,
   const auto &TargetOpts = CI.getTargetOpts();
   const auto &LangOpts = CI.getLangOpts();
   const auto &HSOpts = CI.getHeaderSearchOpts();
+  Options.EnablePalisadeStoreHardening =
+      shouldRunPalisade(LangOpts, CodeGenOpts);
   switch (LangOpts.getThreadModel()) {
   case LangOptions::ThreadModelKind::POSIX:
     Options.ThreadModel = llvm::ThreadModel::POSIX;
@@ -1146,6 +1158,14 @@ void EmitAssemblyHelper::RunOptimizationPipeline(
   if (LangOpts.HIPStdPar && !LangOpts.CUDAIsDevice &&
       LangOpts.HIPStdParInterposeAlloc)
     MPM.addPass(HipStdParAllocationInterpositionPass());
+
+  // Run after optimization and postopt bitcode linking, so local promotion and
+  // stack split see the final set of locals.
+  if (shouldRunPalisade(LangOpts, CodeGenOpts)) {
+    MPM.addPass(createModuleToFunctionPassAdaptor(PalisadeLocalPromotePass()));
+    MPM.addPass(PalisadeStackSplitPass());
+    MPM.addPass(PalisadeGlobalSegregationPass());
+  }
 
   // Add a verifier pass if requested. We don't have to do this if the action
   // requires code generation because there will already be a verifier pass in

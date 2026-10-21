@@ -202,6 +202,9 @@ public:
   /// EnableGlobalISel - This flag enables global instruction selection.
   unsigned EnableGlobalISel : 1;
 
+  /// Harden ordinary stores in the ARM backend for Palisade Project.
+  bool EnablePalisadeStoreHardening = false;
+
   /// EnableGlobalISelAbort - Control abort behaviour when global instruction
   /// selection fails to lower/select an instruction.
   GlobalISelAbortMode GlobalISelAbort = GlobalISelAbortMode::Enable;

@@ -4134,7 +4134,11 @@ int ARMTargetLowering::StoreByValRegs(CCState &CCInfo, SelectionDAG &DAG,
     ArgOffset = -4 * (ARM::R4 - RBegin);
 
   auto PtrVT = getPointerTy(DAG.getDataLayout());
-  int FrameIndex = MFI.CreateFixedObject(ArgSize, ArgOffset, false);
+
+  // Palisade: IR accesses the argument through this slot, so mark it aliased.
+  int FrameIndex = MFI.CreateFixedObject(ArgSize, ArgOffset, false,
+                                         /*isAliased=*/true);
+
   SDValue FIN = DAG.getFrameIndex(FrameIndex, PtrVT);
 
   SmallVector<SDValue, 4> MemOps;
@@ -4144,8 +4148,12 @@ int ARMTargetLowering::StoreByValRegs(CCState &CCInfo, SelectionDAG &DAG,
   for (unsigned Reg = RBegin, i = 0; Reg < REnd; ++Reg, ++i) {
     Register VReg = MF.addLiveIn(Reg, RC);
     SDValue Val = DAG.getCopyFromReg(Chain, dl, VReg, MVT::i32);
-    SDValue Store = DAG.getStore(Val.getValue(1), dl, Val, FIN,
-                                 MachinePointerInfo(OrigArg, 4 * i));
+
+    // Palisade: make byval saved on the protected stack, so fixed stack slots
+    // keep prologue stores as privileged to avoid store hardening.
+    SDValue Store =
+        DAG.getStore(Val.getValue(1), dl, Val, FIN,
+                     MachinePointerInfo::getFixedStack(MF, FrameIndex, 4 * i));
     MemOps.push_back(Store);
     FIN = DAG.getNode(ISD::ADD, dl, PtrVT, FIN, DAG.getConstant(4, dl, PtrVT));
   }

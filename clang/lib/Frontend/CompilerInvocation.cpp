@@ -4022,6 +4022,10 @@ bool CompilerInvocation::ParseLangArgs(LangOptions &Opts, ArgList &Args,
   unsigned NumErrorsBefore = Diags.getNumErrors();
 
   if (Args.hasArg(OPT_fpalisade)) {
+    // Palisade passes and store hardening only run in non-LTO builds.
+    if (const Arg *A = Args.getLastArg(OPT_flto_EQ))
+      Diags.Report(diag::err_drv_argument_not_allowed_with)
+          << "-fpalisade" << A->getAsString(Args);
     // palisade only works for C
     if (IK.getLanguage() != Language::C)
       Diags.Report(diag::err_drv_argument_not_allowed_with)

@@ -31,6 +31,11 @@
 // RUN:   | FileCheck %s --check-prefix=TARGET
 // TARGET: unsupported option '-fpalisade' for target 'riscv32-unknown-none-elf'
 
+/// Reject LTO
+// RUN: not %clang --target=armv8.1m.main-none-eabi -fpalisade -flto -c %s -o /dev/null 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=LTO
+// LTO: invalid argument '-fpalisade' not allowed with '-flto=full'
+
 /// Enabling the feature alone changes no existing behaviour.
 // RUN: %clang --target=armv8.1m.main-none-eabi -fpalisade -fsyntax-only -Xclang -verify %s
 // expected-no-diagnostics

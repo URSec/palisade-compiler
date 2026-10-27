@@ -153,39 +153,51 @@ class StoreLowering {
   // 2. value that is SP, FP related
   Register AddressReg, DataReg;
 
+  // When no free register is available for the address computation, Base is
+  // reused in place instead of spilling: adjusted before the store and undo
+  // after.
+  Register ReuseBase, ReuseIndex;
+  int ReuseOffset = 0;
+  unsigned ReuseShift = 0;
+
   // Register value that saved in stack frame in order to make
   // temporaries registers available.
   // They are pushed before lowering store and popped after it.
   SmallVector<Register, NumTemporaries> Saved;
 
-  // Choose a register for a temporary. Prefer one that holds no live value,
-  // otherwise borrow a live one and save its value around the store.
-  Register temporary() {
-    // A register is not reserved (such as the frame pointer) and is not used
-    // by MI or an earlier temporary.
-    auto IsCandidate = [&](MCPhysReg Reg) {
-      return !MF.getRegInfo().isReserved(Reg) && Unavailable.available(Reg);
-    };
+  // A register usable as a temporary: not reserved (such as the frame pointer)
+  // and not used by MI or an earlier temporary.
+  bool isCandidate(MCPhysReg Reg) const {
+    return !MF.getRegInfo().isReserved(Reg) && Unavailable.available(Reg);
+  }
 
-    // Found a live register that is available to use.
-    for (MCPhysReg Reg : ARM::rGPRRegClass) {
-      if (IsCandidate(Reg) && Live.available(Reg)) {
+  // A candidate register that holds no live value.
+  Register freeRegister() {
+    for (MCPhysReg Reg : ARM::rGPRRegClass)
+      if (isCandidate(Reg) && Live.available(Reg)) {
         Unavailable.addReg(Reg);
         return Reg;
       }
-    }
+    return Register();
+  }
 
-    // Not found live register,
-    // pick one candidate as temporary register and save its value.
-    for (MCPhysReg Reg : ARM::rGPRRegClass) {
-      if (IsCandidate(Reg)) {
+  // Borrow a candidate register, saving its value around the store.
+  Register spillRegister() {
+    for (MCPhysReg Reg : ARM::rGPRRegClass)
+      if (isCandidate(Reg)) {
         Unavailable.addReg(Reg);
         Saved.push_back(Reg);
         return Reg;
       }
-    }
-
     reportUnsupportedStore(MI, "no scratch register outside store operands");
+  }
+
+  // Choose a register for a temporary. Prefer one that holds no live value,
+  // otherwise borrow a live one and save its value around the store.
+  Register temporary() {
+    if (Register Reg = freeRegister())
+      return Reg;
+    return spillRegister();
   }
 
   MachineInstrBuilder build(unsigned Opcode) {
@@ -207,6 +219,21 @@ class StoreLowering {
       Undef = true;
     }
     return getUndefRegState(Undef);
+  }
+
+  // Whether MI reads Reg and every such read is undef (its value does not
+  // matter). Base reuse needs a defined base and index, so it declines these.
+  bool readsUndef(Register Reg) const {
+    bool Read = false;
+    for (const MachineOperand &MO : MI.operands()) {
+      if (!MO.isReg() || !MO.isUse() || !MO.getReg() ||
+          !TRI.regsOverlap(Reg, MO.getReg()))
+        continue;
+      if (!MO.isUndef())
+        return false;
+      Read = true;
+    }
+    return Read;
   }
 
   // Number of bytes we need to move SP register.
@@ -268,17 +295,49 @@ class StoreLowering {
     Restore.addMemOperand(savedWords(MachineMemOperand::MOLoad));
   }
 
+  // Undo the in-place Base adjustment made when Base was reused as the address
+  // temporary. Emitted after the store, so it reads the adjusted Base.
+  void restoreReusedBase() {
+    if (!ReuseBase)
+      return;
+    if (ReuseIndex)
+      build(ARM::t2SUBrs)
+          .addDef(ReuseBase)
+          .addReg(ReuseBase)
+          .addReg(ReuseIndex)
+          .addImm(ARM_AM::getSORegOpc(ARM_AM::lsl, ReuseShift))
+          .add(predOps(Pred, PredReg))
+          .add(condCodeOp());
+    else
+      addOffset(ReuseBase, ReuseBase, -ReuseOffset);
+  }
+
   // Whether words stored at Offset through Offset + Span all fit the unsigned
   // 8-bit immediate offset of STRT (0-255).
   static bool fitsSTRTOffset(int Offset, int Span) {
     return Offset >= 0 && Offset + Span <= 255;
   }
 
+  // Whether Base can serve as its own address temporary: a general register we
+  // can adjust and restore.
+  bool canReuseBase(Register Base, ArrayRef<Register> Values,
+                    Register Index) const {
+    if (!ARM::rGPRRegClass.contains(Base) || readsUndef(Base))
+      return false;
+    if (llvm::is_contained(Values, Base))
+      return false;
+    if (Index && (Index == Base || readsUndef(Index)))
+      return false;
+    return true;
+  }
+
   // Choose the temporaries this store needs and push those that hold live
   // values. However, pushing the data temporary can change an SP-relative store
   // semantics, so an SP-relative Offset is rebased here.
   void reserveTemporaries(ArrayRef<Register> Values, Register Base, int &Offset,
-                          int Span = 0, bool RegisterOffset = false) {
+                          int Span = 0, bool RegisterOffset = false,
+                          bool AllowReuse = false,
+                          Register Index = Register()) {
     // The compiler never stores below SP, where the temporaries are saved.
     if (Base == ARM::SP && Offset < 0)
       reportUnsupportedStore(MI, "store below SP");
@@ -292,10 +351,18 @@ class StoreLowering {
     // Save address temporary
     int Adjusted = Offset + (Base == ARM::SP ? pushedBytes() : 0);
 
-    // A register-offset address (base + index) is computed into the
-    // address temporary or offset STRT cannot encode.
-    if (RegisterOffset || !fitsSTRTOffset(Adjusted, Span))
-      AddressReg = temporary();
+    // A register-offset address (base + index) is computed into the address
+    // temporary, or an offset STRT cannot encode. Prefer a free register; when
+    // none is free, adjust Base in place (undone after the store) rather than
+    // spill, where that is safe.
+    if (RegisterOffset || !fitsSTRTOffset(Adjusted, Span)) {
+      if (Register Free = freeRegister())
+        AddressReg = Free;
+      else if (AllowReuse && canReuseBase(Base, Values, Index))
+        ReuseBase = Base;
+      else
+        AddressReg = spillRegister();
+    }
 
     // Rebase SP offset
     if (Base == ARM::SP)
@@ -326,9 +393,14 @@ class StoreLowering {
   void legalizeSTRTAddress(Register &Base, int &Offset, int Span = 0) {
     if (fitsSTRTOffset(Offset, Span))
       return;
-    assert(AddressReg && "address temporary was not prepared");
-    addOffset(AddressReg, Base, Offset);
-    Base = AddressReg;
+    assert((AddressReg || ReuseBase == Base) &&
+           "address temporary was not prepared");
+    // Reuse mode computes the address into Base itself and undoes it later.
+    Register Dest = AddressReg ? AddressReg : Base;
+    addOffset(Dest, Base, Offset);
+    if (!AddressReg)
+      ReuseOffset = Offset;
+    Base = Dest;
     Offset = 0;
   }
 
@@ -379,7 +451,9 @@ class StoreLowering {
     Register Value = MI.getOperand(0).getReg();
     Register Base = MI.getOperand(1).getReg();
     int Offset = MI.getOperand(2).getImm() * Scale;
-    reserveTemporaries(Value, Base, Offset);
+    reserveTemporaries(Value, Base, Offset, /*Span=*/0,
+                       /*RegisterOffset=*/false,
+                       /*AllowReuse=*/true);
     legalizeSTRTAddress(Base, Offset);
     emitStore(Opcode, Value, Base, Offset);
   }
@@ -389,16 +463,22 @@ class StoreLowering {
     Register Base = MI.getOperand(1).getReg();
     Register Index = MI.getOperand(2).getReg();
     int Offset = 0;
-    reserveTemporaries(Value, Base, Offset, 0, /*RegisterOffset=*/true);
+    reserveTemporaries(Value, Base, Offset, /*Span=*/0, /*RegisterOffset=*/true,
+                       /*AllowReuse=*/true, Index);
+    Register Dest = AddressReg ? AddressReg : Base;
+    unsigned Shift = Shifted ? MI.getOperand(3).getImm() : 0;
     build(ARM::t2ADDrs)
-        .addDef(AddressReg)
+        .addDef(Dest)
         .addReg(Base, undefState(Base))
         .addReg(Index, undefState(Index))
-        .addImm(ARM_AM::getSORegOpc(ARM_AM::lsl,
-                                    Shifted ? MI.getOperand(3).getImm() : 0))
+        .addImm(ARM_AM::getSORegOpc(ARM_AM::lsl, Shift))
         .add(predOps(Pred, PredReg))
         .add(condCodeOp());
-    emitStore(Opcode, Value, AddressReg, Offset);
+    if (!AddressReg) {
+      ReuseIndex = Index;
+      ReuseShift = Shift;
+    }
+    emitStore(Opcode, Value, Dest, Offset);
   }
 
 
@@ -446,7 +526,8 @@ class StoreLowering {
     Register Base = MI.getOperand(2).getReg();
     int Offset = MI.getOperand(3).getImm();
     Register Values[] = {MI.getOperand(0).getReg(), MI.getOperand(1).getReg()};
-    reserveTemporaries(Values, Base, Offset, 4);
+    reserveTemporaries(Values, Base, Offset, 4, /*RegisterOffset=*/false,
+                       /*AllowReuse=*/true);
     legalizeSTRTAddress(Base, Offset, 4);
     emitStore(ARM::t2STRT, Values[0], Base, Offset);
     emitStore(ARM::t2STRT, Values[1], Base, Offset + 4);
@@ -460,7 +541,8 @@ class StoreLowering {
     if (ARM_AM::getAM5Op(Imm) == ARM_AM::sub)
       Offset = -Offset;
     int Span = ARM::DPRRegClass.contains(Value) ? 4 : 0;
-    reserveTemporaries(Value, Base, Offset, Span);
+    reserveTemporaries(Value, Base, Offset, Span, /*RegisterOffset=*/false,
+                       /*AllowReuse=*/true);
     legalizeSTRTAddress(Base, Offset, Span);
     emitFPStore(Value, Base, Offset);
   }
@@ -519,6 +601,7 @@ public:
   // restore the registers to memory if needed.
   void run() {
     lower();
+    restoreReusedBase();
     restoreTemporaries();
   }
 

@@ -59,11 +59,12 @@ declare void @use(ptr byval([4096 x i8]))
 ; The temporary is pushed and popped around the store. A large frame and a
 ; large outgoing argument area do not matter, since no frame slot is used.
 define void @register_pressure() "frame-pointer"="all" {
+; No register is free, but the base (r0) is not the stored value, so it is
+; adjusted in place and restored rather than spilling an address temporary.
 ; CHECK-LABEL: register_pressure:
-; CHECK:       str r2, [sp, #-4]!
-; CHECK-NEXT:  addw r2, r0, #1024
-; CHECK-NEXT:  strt r1, [r2]
-; CHECK-NEXT:  ldr r2, [sp], #4
+; CHECK:       addw r0, r0, #1024
+; CHECK-NEXT:  strt r1, [r0]
+; CHECK-NEXT:  subw r0, r0, #1024
   %a = alloca [4096 x i8], align 4
   call void @use(ptr byval([4096 x i8]) %a)
   %regs = call %Registers asm sideeffect "", "={r0},={r1},={r2},={r3},={r4},={r5},={r8},={r9},={r10},={r11},={r12},={lr}"()

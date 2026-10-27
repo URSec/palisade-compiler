@@ -21462,6 +21462,15 @@ bool ARMTargetLowering::shouldConvertConstantLoadToIntImm(const APInt &Imm,
   return true;
 }
 
+MachineMemOperand::Flags
+ARMTargetLowering::getTargetMMOFlags(const Instruction &I) const {
+  // Tag the store instruction if it can be hoisted, so store hardening leave
+  // them intacted.
+  if (I.getMetadata("palisade.noharden"))
+    return MachineMemOperand::MOTargetFlag1;
+  return MachineMemOperand::MONone;
+}
+
 bool ARMTargetLowering::isExtractSubvectorCheap(EVT ResVT, EVT SrcVT,
                                                 unsigned Index) const {
   if (!isOperationLegalOrCustom(ISD::EXTRACT_SUBVECTOR, ResVT))

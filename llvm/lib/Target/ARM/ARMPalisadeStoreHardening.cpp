@@ -94,6 +94,11 @@ bool isUnprivilegedStore(unsigned Opcode) {
 
 // Whether a MI needs to be hardened.
 bool needsHardening(const MachineInstr &MI) {
+  // Keep the privileged store if the checks are hosited.
+  for (const MachineMemOperand *MMO : MI.memoperands())
+    if (MMO->getFlags() & MachineMemOperand::MOTargetFlag1)
+      return false;
+
   StoreDomain Domain = getStoreDomain(MI);
 
   // Compiler optimizations may group multiple store instructions into one,

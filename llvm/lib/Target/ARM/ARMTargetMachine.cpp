@@ -114,6 +114,7 @@ extern "C" LLVM_ABI LLVM_EXTERNAL_VISIBILITY void LLVMInitializeARMTarget() {
   initializeMVEGatherScatterLoweringPass(Registry);
   initializeARMSLSHardeningPass(Registry);
   initializeARMPalisadeStoreHardeningPass(Registry);
+  initializeARMPalisadeStoreHardenHoistPass(Registry);
   initializeMVELaneInterleavingPass(Registry);
   initializeARMFixCortexA57AES1742098Pass(Registry);
   initializeARMDAGToDAGISelLegacyPass(Registry);
@@ -404,6 +405,12 @@ void ARMPassConfig::addCodeGenPrepare() {
 }
 
 bool ARMPassConfig::addPreISel() {
+  // Hoist the checks out of the loop.
+  if (TM->getOptLevel() != CodeGenOptLevel::None &&
+      (EnablePalisadeStoreHardening ||
+       TM->Options.EnablePalisadeStoreHardening))
+    addPass(createARMPalisadeStoreHardenHoistPass());
+
   if ((TM->getOptLevel() != CodeGenOptLevel::None &&
        EnableGlobalMerge == cl::boolOrDefault::BOU_UNSET) ||
       EnableGlobalMerge == cl::boolOrDefault::BOU_TRUE) {

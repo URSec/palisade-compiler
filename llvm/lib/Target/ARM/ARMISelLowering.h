@@ -328,6 +328,10 @@ class VectorType;
     bool shouldConvertConstantLoadToIntImm(const APInt &Imm,
                                            Type *Ty) const override;
 
+    /// Palisade: tag stores in the loop can be hoisted.
+    MachineMemOperand::Flags
+    getTargetMMOFlags(const Instruction &I) const override;
+
     /// Return true if EXTRACT_SUBVECTOR is cheap for this result type
     /// with this index.
     bool isExtractSubvectorCheap(EVT ResVT, EVT SrcVT,

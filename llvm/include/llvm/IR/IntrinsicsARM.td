@@ -1497,4 +1497,23 @@ defm int_arm_cde_vcx1q : CDEVCXVecIntrinsics<[]>;
 defm int_arm_cde_vcx2q : CDEVCXVecIntrinsics<[llvm_v16i8_ty]>;
 defm int_arm_cde_vcx3q : CDEVCXVecIntrinsics<[llvm_v16i8_ty, llvm_v16i8_ty]>;
 
+//===----------------------------------------------------------------------===//
+// Palisade pointer authentication for protected pointers (address space 200).
+// The PAC is a separate 32-bit value and the pointer itself is unchanged.
+
+// Compute the PAC of a protected pointer with a modifier.
+def int_arm_protected_sign
+    : DefaultAttrsIntrinsic<[llvm_i32_ty],
+                            [LLVMQualPointerType<200>, llvm_i32_ty],
+                            [IntrNoMem, IntrSpeculatable]>;
+
+// Check a protected pointer against its PAC and modifier, and return the
+// pointer, so its uses depend on the check. It faults on a mismatch, so it is
+// not speculatable.
+def int_arm_protected_auth
+    : DefaultAttrsIntrinsic<[LLVMQualPointerType<200>],
+                            [LLVMQualPointerType<200>, llvm_i32_ty,
+                             llvm_i32_ty],
+                            [IntrNoMem]>;
+
 } // end TargetPrefix

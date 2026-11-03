@@ -4,7 +4,8 @@
 // RUN: %clang_cc1 -triple x86_64-unknown-linux-gnu -fpalisade -std=c11 -O2 -emit-llvm -o - %s | FileCheck %s --check-prefixes=CHECK,OPT --enable-var-scope --implicit-check-not=addrspacecast
 
 // Address space 200 identifies protected storage. Pointer values and the
-// objects holding those pointers have independent address spaces.
+// objects holding those pointers have independent address spaces. In memory,
+// a pointer to protected storage is followed by a PAC word, zero in constants.
 int ordinary;
 __protected int protected_zero;
 __protected int protected_value = 7;
@@ -22,14 +23,16 @@ __protected int *literal = &(__protected int){11};
 // CHECK-DAG: @protected_value = {{.*}}addrspace(200) global i32 7
 // CHECK-DAG: @protected_external = external {{.*}}addrspace(200) global i32
 // CHECK-DAG: @p = {{.*}}global ptr @ordinary
-// CHECK-DAG: @q = {{.*}}global ptr addrspace(200) @protected_value
+// CHECK-DAG: @q = {{.*}}global { ptr addrspace(200), i32 } { ptr addrspace(200) @protected_value, i32 0 }
 // CHECK-DAG: @r = {{.*}}addrspace(200) global ptr @ordinary
-// CHECK-DAG: @t = {{.*}}addrspace(200) global ptr addrspace(200) @protected_value
+// CHECK-DAG: @t = {{.*}}addrspace(200) global { ptr addrspace(200), i32 } { ptr addrspace(200) @protected_value, i32 0 }
 // CHECK-DAG: @values = {{.*}}addrspace(200) global [4 x i32] zeroinitializer
 // CHECK-DAG: @callback = {{.*}}addrspace(200) global ptr null
 // CHECK-DAG: @.compoundliteral = internal addrspace(200) global i32 11
-// CHECK-DAG: @literal = {{.*}}global ptr addrspace(200) @.compoundliteral
+// CHECK-DAG: @literal = {{.*}}global { ptr addrspace(200), i32 } { ptr addrspace(200) @.compoundliteral, i32 0 }
 // CHECK-DAG: @static_storage.value = internal addrspace(200) global i32 9
+// O0-DAG: %struct.record = type { i32, { ptr addrspace(200), i32 }, [4 x i32] }
+// CHECK-DAG: @initialized_record = {{.*}}global {{.*}}{ i32 1, {{.*}}{ ptr addrspace(200), i32 } { ptr addrspace(200) @protected_value, i32 0 }, [4 x i32] zeroinitializer }
 
 // CHECK-LABEL: define{{.*}} void @write_through_pointers(
 // CHECK: [[P:%.*]] = load ptr, ptr @p
@@ -99,6 +102,7 @@ struct record {
   __protected int *pointer;
   int array[4];
 };
+struct record initialized_record = {1, &protected_value};
 
 // CHECK-LABEL: define{{.*}} i32 @members(ptr addrspace(200)
 // O0: getelementptr inbounds{{.*}} %struct.record, ptr addrspace(200) {{.*}}, i32 0, i32 1
@@ -113,7 +117,29 @@ int members(__protected struct record *p, int index) {
   return p->array[index];
 }
 
+// Pointer arithmetic on slots steps over the PAC word.
+// CHECK-LABEL: define{{.*}} ptr @next_slot(
+// O0: getelementptr inbounds { ptr addrspace(200), i32 }, ptr %{{.*}}, i{{32|64}} 1
+__protected int **next_slot(__protected int **p) { return p + 1; }
+
 void consume(__protected int *p);
+void consume_records(struct record *constant, struct record *dense);
+
+// Initializers store a protected pointer without its PAC word, implicit null
+// pointers included, and never copy it from a constant.
+// CHECK-LABEL: define{{.*}} void @initializers(
+// O0-NOT: @llvm.memcpy
+// O0: store ptr addrspace(200) @protected_value, ptr %{{.*}}
+// O0: store ptr addrspace(200) null, ptr %{{.*}}
+// O0: store ptr addrspace(200) null, ptr %{{.*}}
+void initializers(int value) {
+  struct record constant = {1, &protected_value};
+  struct record dense = {value, .array = {value, value, value, value}};
+  __protected int *empty = {};
+  consume_records(&constant, &dense);
+  consume(empty);
+}
+
 void consume_ordinary_slot(int *__protected *p);
 void consume_protected_slot(__protected int *__protected *p);
 
@@ -122,7 +148,7 @@ void consume_protected_slot(__protected int *__protected *p);
 // CHECK-DAG: %scalar = alloca i32, align 4, addrspace(200)
 // CHECK-DAG: %array = alloca [4 x i32], align {{[0-9]+}}, addrspace(200)
 // CHECK-DAG: %ordinary_slot = alloca ptr, align {{[0-9]+}}, addrspace(200)
-// CHECK-DAG: %protected_slot = alloca ptr addrspace(200), align {{[0-9]+}}, addrspace(200)
+// CHECK-DAG: %protected_slot = alloca { ptr addrspace(200), i32 }, align {{[0-9]+}}, addrspace(200)
 // OPT: call void @llvm.lifetime.start.p200(ptr {{.*}}addrspace(200) {{.*}}%scalar)
 // CHECK: store i32 1, ptr addrspace(200) %scalar
 // CHECK: store ptr {{.*}}, ptr addrspace(200) %ordinary_slot

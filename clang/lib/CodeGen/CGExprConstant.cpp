@@ -2058,6 +2058,12 @@ llvm::Constant *ConstantEmitter::emitForMemory(CodeGenModule &CGM,
     }
   }
 
+  // Initialize the PAC for protected to 0
+  if (destType->isPalisadeProtectedPointerType() && C->getType()->isPointerTy())
+    return llvm::ConstantStruct::get(
+        cast<llvm::StructType>(CGM.getTypes().ConvertTypeForMem(destType)),
+        {C, llvm::ConstantInt::get(CGM.Int32Ty, 0)});
+
   return C;
 }
 
@@ -2187,7 +2193,11 @@ llvm::Constant *ConstantLValueEmitter::tryEmit() {
   // We need this in order to correctly handle things like a ptrtoint of a
   // non-zero null pointer and addrspace casts that aren't trivially
   // represented in LLVM IR.
-  auto destTy = CGM.getTypes().ConvertTypeForMem(DestType);
+  //
+  // For palisade protected pointer, use the value type instead of memory form.
+  auto destTy = DestType->isPalisadeProtectedPointerType()
+                    ? CGM.getTypes().ConvertType(DestType)
+                    : CGM.getTypes().ConvertTypeForMem(DestType);
   assert(isa<llvm::IntegerType>(destTy) || isa<llvm::PointerType>(destTy));
 
   // If there's no base at all, this is a null or absolute pointer,

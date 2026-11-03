@@ -162,6 +162,10 @@ llvm::Type *CodeGenTypes::ConvertTypeForMem(QualType T) {
     return llvm::IntegerType::get(getLLVMContext(),
                                   (unsigned)Context.getTypeSize(T));
 
+  // A protected pointer is followed by its PAC word in memory.
+  if (T->isPalisadeProtectedPointerType())
+    return llvm::StructType::get(R, llvm::Type::getInt32Ty(getLLVMContext()));
+
   // Else, don't map it.
   return R;
 }
@@ -185,6 +189,10 @@ llvm::Type *CodeGenTypes::convertTypeForLoadStore(QualType T,
   if (T->isBitIntType())
     return llvm::Type::getIntNTy(
         getLLVMContext(), Context.getTypeSizeInChars(T).getQuantity() * 8);
+
+  // A protected pointer is loaded and stored without its PAC.
+  if (T->isPalisadeProtectedPointerType())
+    return ConvertType(T);
 
   if (LLVMTy->isIntegerTy(1))
     return llvm::IntegerType::get(getLLVMContext(),

@@ -8156,6 +8156,10 @@ public:
                                 Expr *SrcExpr, AssignmentAction Action,
                                 bool *Complained = nullptr);
 
+  /// Whether converting From to To changes the signature of a function that
+  /// takes or returns pointers to Palisade protected storage.
+  bool changesProtectedFunctionSignature(QualType From, QualType To);
+
   /// CheckAssignmentConstraints - Perform type checking for assignment,
   /// argument passing, variable initialization, and function return values.
   /// C99 6.5.16.

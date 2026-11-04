@@ -9511,6 +9511,11 @@ def err_typecheck_incompatible_nested_address_space : Error<
   "sending to parameter of different type}0,1"
   "|%diff{casting $ to type $|casting between types}0,1}2"
   " changes address space of nested pointer">;
+def err_palisade_int_to_protected_pointer : Error<
+  "cannot cast integer type %0 to pointer to protected storage %1">;
+def err_palisade_protected_function_signature : Error<
+  "conversion from %0 to %1 changes the signature of a function with "
+  "pointers to protected storage">;
 def err_typecheck_incompatible_ownership : Error<
   "%select{%diff{assigning $ to $|assigning to different types}1,0"
   "|%diff{passing $ to parameter of type $|"

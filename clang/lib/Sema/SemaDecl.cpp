@@ -10741,9 +10741,11 @@ Sema::ActOnFunctionDeclarator(Scope *S, Declarator &D, DeclContext *DC,
     return NewFD;
   }
 
-  if (getLangOpts().OpenCL || getLangOpts().HLSL) {
+  if (getLangOpts().OpenCL || getLangOpts().HLSL ||
+      NewFD->getReturnType().getAddressSpace() == LangAS::palisade_protected) {
     // Neither OpenCL nor HLSL allow an address space qualifyer on a return
     // type.
+    // Palisade doesn't allow __protected qualifies a return value.
     //
     // OpenCL v1.1 s6.5: Using an address space qualifier in a function return
     // type declaration will generate a compilation error.

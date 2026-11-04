@@ -2474,6 +2474,9 @@ TypeInfo ASTContext::getTypeInfoImpl(const Type *T) const {
     AS = cast<PointerType>(T)->getPointeeType().getAddressSpace();
     Width = Target->getPointerWidth(AS);
     Align = Target->getPointerAlign(AS);
+    // Widen the pointer to protected region in palisade
+    if (AS == LangAS::palisade_protected)
+      Width = llvm::alignTo(Width + 32, Align);
     break;
   case Type::MemberPointer: {
     const auto *MPT = cast<MemberPointerType>(T);
@@ -12436,6 +12439,8 @@ unsigned ASTContext::getIntWidth(QualType T) const {
     return 1;
   if (const auto *EIT = T->getAs<BitIntType>())
     return EIT->getNumBits();
+  if (T->isPalisadeProtectedPointerType())
+    return Target->getPointerWidth(LangAS::palisade_protected);
   // For builtin types, just use the standard type sizing method
   return (unsigned)getTypeSize(T);
 }

@@ -12,7 +12,7 @@ void consume_slot(__protected int *__protected *p);
 void scalar_parameter(__protected int value) { consume(&value); }
 
 // CHECK-LABEL: define{{.*}} void @pointer_parameter(ptr addrspace(200) noundef %value)
-// CHECK: %value.addr = alloca ptr addrspace(200), align {{[0-9]+}}, addrspace(200)
+// CHECK: %value.addr = alloca { ptr addrspace(200), i32 }, align {{[0-9]+}}, addrspace(200)
 // CHECK: store ptr addrspace(200) %value, ptr addrspace(200) %value.addr
 // CHECK: call void @consume_slot(ptr addrspace(200) {{.*}}%value.addr)
 void pointer_parameter(__protected int *__protected value) {

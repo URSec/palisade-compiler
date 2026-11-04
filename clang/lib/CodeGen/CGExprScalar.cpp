@@ -1894,6 +1894,9 @@ Value *ScalarExprEmitter::EmitComplexToScalarConversion(
 }
 
 Value *ScalarExprEmitter::EmitNullValue(QualType Ty) {
+  // Emit widen null constant for palisade protected pointer
+  if (Ty->isPalisadeProtectedPointerType())
+    return CGF.CGM.getNullPointer(cast<llvm::PointerType>(ConvertType(Ty)), Ty);
   return CGF.EmitFromMemory(CGF.CGM.EmitNullConstant(Ty), Ty);
 }
 

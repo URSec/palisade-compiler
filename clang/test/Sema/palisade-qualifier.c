@@ -28,8 +28,17 @@ _Static_assert(!SAME(protected_int *, int __attribute__((address_space(200))) *)
                "language domain differs from a numeric target space");
 _Static_assert(sizeof(protected_int) == sizeof(int), "object size");
 _Static_assert(_Alignof(protected_int) == _Alignof(int), "object alignment");
-_Static_assert(sizeof(q) == sizeof(p), "pointer size");
+// A pointer to protected storage is followed by a PAC word wherever it is
+// stored, protected slots included. Its alignment and value width don't change.
+_Static_assert(sizeof(q) == 2 * sizeof(p), "pointer size");
+_Static_assert(sizeof(t) == sizeof(q), "protected slot size");
+_Static_assert(sizeof(r) == sizeof(p), "ordinary pointer size");
+_Static_assert(sizeof(protected_ptr *) == sizeof(int *), "pointer to a slot");
 _Static_assert(_Alignof(protected_ptr) == _Alignof(int *), "pointer alignment");
+__UINTPTR_TYPE__ protected_address = (__UINTPTR_TYPE__)&t;
+__UINTPTR_TYPE__ pointer_value(__protected int *p) {
+  return (__UINTPTR_TYPE__)p;
+}
 
 // Members inherit storage from their containing object recursively.
 struct record {

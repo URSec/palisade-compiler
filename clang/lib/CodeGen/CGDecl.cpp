@@ -1495,6 +1495,19 @@ static bool shouldExtendLifetime(const ASTContext &Context,
   return true;
 }
 
+/// Whether an array or record contains a protected pointer.
+static bool containsProtectedPointer(const ASTContext &Context, QualType T) {
+  T = Context.getBaseElementType(T);
+  if (T->isPalisadeProtectedPointerType())
+    return true;
+  if (const RecordDecl *RD = T->getAsRecordDecl())
+    if ((RD = RD->getDefinition()))
+      return llvm::any_of(RD->fields(), [&](const FieldDecl *FD) {
+        return containsProtectedPointer(Context, FD->getType());
+      });
+  return false;
+}
+
 /// EmitAutoVarAlloca - Emit the alloca and debug information for a
 /// local variable.  Does not emit initialization or destruction.
 CodeGenFunction::AutoVarEmission
@@ -1547,7 +1560,10 @@ CodeGenFunction::EmitAutoVarAlloca(const VarDecl &D) {
     // isConstantInitializer produces wrong answers for structs with
     // reference or bitfield members, and a few other cases, and checking
     // for POD-ness protects us from some of these.
+    //
+    // Initialize palisade protected pointer for each field {ptr, pac}.
     if (D.getInit() && (Ty->isArrayType() || Ty->isRecordType()) &&
+        !containsProtectedPointer(getContext(), Ty) &&
         (D.isConstexpr() ||
          ((Ty.isPODType(getContext()) ||
            getContext().getBaseElementType(Ty)->isObjCObjectPointerType()) &&
@@ -2043,7 +2059,8 @@ void CodeGenFunction::EmitAutoVarInit(const AutoVarEmission &emission) {
 
   llvm::Constant *constant = nullptr;
   if (emission.IsConstantAggregate ||
-      D.mightBeUsableInConstantExpressions(getContext())) {
+      (D.mightBeUsableInConstantExpressions(getContext()) &&
+       !containsProtectedPointer(getContext(), type))) {
     assert(!capturedByInit && "constant init contains a capturing block?");
     constant = ConstantEmitter(*this).tryEmitAbstractForInitializer(D);
     if (constant && !constant->isNullValue() &&

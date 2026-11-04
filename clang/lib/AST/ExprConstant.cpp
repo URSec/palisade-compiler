@@ -19891,7 +19891,8 @@ bool IntExprEvaluator::VisitCastExpr(const CastExpr *E) {
       // FIXME: Allow a larger integer size than the pointer size, and allow
       // narrowing back down to pointer width in subsequent integral casts.
       // FIXME: Check integer type's active bits, not its type size.
-      if (Info.Ctx.getTypeSize(DestType) != Info.Ctx.getTypeSize(SrcType))
+      // Using getIntWidth to avoid palisade widen pointer break the check.
+      if (Info.Ctx.getTypeSize(DestType) != Info.Ctx.getIntWidth(SrcType))
         return Error(E);
 
       LV.Designator.setInvalid();

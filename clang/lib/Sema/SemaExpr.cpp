@@ -9397,6 +9397,13 @@ static AssignConvertType checkPointerTypesForAssignment(Sema &S,
       ConvTy = AssignConvertType::CompatiblePointerDiscardsQualifiers;
   }
 
+  // Palisade: a function with pointers to protected storage in its signature
+  // only converts to a pointer to the same function type.
+  if (S.changesProtectedFunctionSignature(RHSType, LHSType))
+    return lhptee->isVoidType() || rhptee->isVoidType()
+               ? AssignConvertType::FunctionVoidPointer
+               : AssignConvertType::IncompatibleFunctionPointer;
+
   // C99 6.5.16.1p1 (constraint 4): If one operand is a pointer to an object or
   // incomplete type and the other is a pointer to a qualified or unqualified
   // version of void...
@@ -13113,7 +13120,12 @@ QualType Sema::CheckCompareOperands(ExprResult &LHS, ExprResult &RHS,
     }
     if (LCanPointeeTy != RCanPointeeTy) {
       // Treat NULL constant as a special case in OpenCL.
-      if (getLangOpts().OpenCL && !LHSIsNull && !RHSIsNull) {
+      // Palisade keeps protected storage disjoint with other address space.
+      bool PalisadeProtected =
+          LCanPointeeTy.getAddressSpace() == LangAS::palisade_protected ||
+          RCanPointeeTy.getAddressSpace() == LangAS::palisade_protected;
+      if ((getLangOpts().OpenCL || PalisadeProtected) && !LHSIsNull &&
+          !RHSIsNull) {
         if (!LCanPointeeTy.isAddressSpaceOverlapping(RCanPointeeTy,
                                                      getASTContext())) {
           Diag(Loc,
@@ -17579,6 +17591,42 @@ static bool maybeDiagnoseAssignmentToFunction(Sema &S, QualType DstType,
                                               SrcExpr->getBeginLoc());
 }
 
+/// Whether T is a pointer to protected storage, or reaches one through
+/// pointers and function signatures.
+static bool hasProtectedPointer(QualType T) {
+  if (const auto *PT = T->getAs<PointerType>()) {
+    QualType Pointee = PT->getPointeeType();
+    return Pointee.getAddressSpace() == LangAS::palisade_protected ||
+           hasProtectedPointer(Pointee);
+  }
+  if (const auto *FT = T->getAs<FunctionType>()) {
+    if (hasProtectedPointer(FT->getReturnType()))
+      return true;
+    if (const auto *FPT = dyn_cast<FunctionProtoType>(FT))
+      return llvm::any_of(FPT->param_types(), hasProtectedPointer);
+  }
+  return false;
+}
+
+bool Sema::changesProtectedFunctionSignature(QualType From, QualType To) {
+  if (!getLangOpts().Palisade)
+    return false;
+  // From may also be a function that hasn't decayed to a pointer yet.
+  auto PointeeFunction = [](QualType T) -> const FunctionType * {
+    if (const auto *PT = T->getAs<PointerType>())
+      T = PT->getPointeeType();
+    return T->getAs<FunctionType>();
+  };
+  const FunctionType *FromFn = PointeeFunction(From);
+  const FunctionType *ToFn = PointeeFunction(To);
+  bool FromProtected = FromFn && hasProtectedPointer(QualType(FromFn, 0));
+  bool ToProtected = ToFn && hasProtectedPointer(QualType(ToFn, 0));
+  if (!FromProtected && !ToProtected)
+    return false;
+  return !FromFn || !ToFn ||
+         !Context.hasSameType(QualType(FromFn, 0), QualType(ToFn, 0));
+}
+
 bool Sema::DiagnoseAssignmentResult(AssignConvertType ConvTy,
                                     SourceLocation Loc,
                                     QualType DstType, QualType SrcType,
@@ -17586,6 +17634,18 @@ bool Sema::DiagnoseAssignmentResult(AssignConvertType ConvTy,
                                     bool *Complained) {
   if (Complained)
     *Complained = false;
+
+  // Palisade: reject the function pointer conversions changes storage domain
+  // that checkPointerTypesForAssignment marked.
+  if ((ConvTy == AssignConvertType::IncompatibleFunctionPointer ||
+       ConvTy == AssignConvertType::FunctionVoidPointer) &&
+      changesProtectedFunctionSignature(SrcType, DstType)) {
+    Diag(Loc, diag::err_palisade_protected_function_signature)
+        << SrcType << DstType << SrcExpr->getSourceRange();
+    if (Complained)
+      *Complained = true;
+    return true;
+  }
 
   // Decode the result (notice that AST's are still created for extensions).
   bool CheckInferredResultType = false;

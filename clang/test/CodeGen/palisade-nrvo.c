@@ -2,13 +2,6 @@
 // RUN: %clang_cc1 -triple x86_64-unknown-linux-gnu -fpalisade -std=c11 -emit-llvm -o - %s | FileCheck %s --check-prefixes=CHECK,O0 --enable-var-scope --implicit-check-not=addrspacecast
 // RUN: %clang_cc1 -triple thumbv8.1m.main-none-eabi -fpalisade -std=c11 -O2 -emit-llvm -o - %s | FileCheck %s --check-prefixes=CHECK,OPT --enable-var-scope --implicit-check-not=addrspacecast
 // RUN: %clang_cc1 -triple x86_64-unknown-linux-gnu -fpalisade -std=c11 -O2 -emit-llvm -o - %s | FileCheck %s --check-prefixes=CHECK,OPT --enable-var-scope --implicit-check-not=addrspacecast
-// RUN: %clang_cc1 -triple thumbv8.1m.main-none-eabi -fpalisade -std=c11 -DRETURN_QUALIFIER=__protected -emit-llvm -o - %s | FileCheck %s --check-prefixes=CHECK,O0 --enable-var-scope --implicit-check-not=addrspacecast
-// RUN: %clang_cc1 -triple x86_64-unknown-linux-gnu -fpalisade -std=c11 -DRETURN_QUALIFIER=__protected -emit-llvm -o - %s | FileCheck %s --check-prefixes=CHECK,O0 --enable-var-scope --implicit-check-not=addrspacecast
-
-// Qualifying the function's return type does not change its ABI return storage.
-#ifndef RETURN_QUALIFIER
-#define RETURN_QUALIFIER
-#endif
 
 struct small { int value; };
 struct large { int values[32]; };
@@ -27,7 +20,7 @@ void consume_ordinary(struct large *p);
 // O0: ret i32
 // OPT: [[VALUE:%.*]] = load i32, ptr addrspace(200) [[LOCAL]]
 // OPT: ret i32 [[VALUE]]
-RETURN_QUALIFIER struct small protected_small(void) {
+struct small protected_small(void) {
   __protected struct small value = {0};
   consume_small(&value);
   return value;
@@ -42,7 +35,7 @@ RETURN_QUALIFIER struct small protected_small(void) {
 // CHECK: call void @consume_large(ptr addrspace(200) {{.*}}[[LOCAL]])
 // CHECK: call void @llvm.memcpy.p0.p200.i{{32|64}}(ptr {{.*}}[[RESULT]], ptr addrspace(200) {{.*}}[[LOCAL]], i{{32|64}} 128, i1 false)
 // CHECK: ret void
-RETURN_QUALIFIER struct large protected_large(void) {
+struct large protected_large(void) {
   __protected struct large value = {0};
   consume_large(&value);
   return value;

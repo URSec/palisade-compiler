@@ -187,6 +187,9 @@ namespace {
     // Language specific cast restrictions for address spaces.
     void checkAddressSpaceCast(QualType SrcType, QualType DestType);
 
+    // Palisade restrictions on casts into protected storage.
+    void checkPalisadeCast(QualType SrcType, QualType DestType);
+
     void checkCastAlign() {
       Self.CheckCastAlign(SrcExpr.get(), DestType, OpRange);
     }
@@ -2733,6 +2736,55 @@ void CastOperation::checkAddressSpaceCast(QualType SrcType, QualType DestType) {
   }
 }
 
+// A cast can't make a pointer to protected storage from an ordinary pointer or
+// an integer, or change the signature of a function with pointers to protected
+// storage. Casting a protected pointer to an ordinary one is allowed, casting
+// to a null pointer constant is also allowed.
+void CastOperation::checkPalisadeCast(QualType SrcType, QualType DestType) {
+  if (!Self.getLangOpts().Palisade ||
+      SrcExpr.get()->isNullPointerConstant(Self.Context,
+                                           Expr::NPC_ValueDependentIsNotNull))
+    return;
+
+  if (Self.changesProtectedFunctionSignature(SrcType, DestType)) {
+    Self.Diag(OpRange.getBegin(),
+              diag::err_palisade_protected_function_signature)
+        << SrcType << DestType << SrcExpr.get()->getSourceRange();
+    SrcExpr = ExprError();
+    return;
+  }
+
+  if (SrcType->isIntegralType(Self.Context) &&
+      DestType->isPalisadeProtectedPointerType()) {
+    Self.Diag(OpRange.getBegin(), diag::err_palisade_int_to_protected_pointer)
+        << SrcType << DestType << SrcExpr.get()->getSourceRange();
+    SrcExpr = ExprError();
+    return;
+  }
+
+  // Check every level of indirection.
+  const Type *DestPtr = Self.Context.getCanonicalType(DestType.getTypePtr());
+  const Type *SrcPtr = Self.Context.getCanonicalType(SrcType.getTypePtr());
+  bool Nested = false;
+  while (isa<PointerType>(DestPtr) && isa<PointerType>(SrcPtr)) {
+    QualType DestPointee = cast<PointerType>(DestPtr)->getPointeeType();
+    QualType SrcPointee = cast<PointerType>(SrcPtr)->getPointeeType();
+    if (DestPointee.getAddressSpace() == LangAS::palisade_protected &&
+        SrcPointee.getAddressSpace() != LangAS::palisade_protected) {
+      Self.Diag(OpRange.getBegin(),
+                Nested ? diag::err_typecheck_incompatible_nested_address_space
+                       : diag::err_typecheck_incompatible_address_space)
+          << SrcType << DestType << AssignmentAction::Casting
+          << SrcExpr.get()->getSourceRange();
+      SrcExpr = ExprError();
+      return;
+    }
+    DestPtr = DestPointee.getTypePtr();
+    SrcPtr = SrcPointee.getTypePtr();
+    Nested = true;
+  }
+}
+
 bool Sema::ShouldSplatAltivecScalarInCast(const VectorType *VecTy) {
   bool SrcCompatXL = this->getLangOpts().getAltivecSrcCompat() ==
                      LangOptions::AltivecSrcCompatKind::XL;
@@ -3086,6 +3138,10 @@ void CastOperation::CheckCStyleCast() {
   assert(!SrcType->isPlaceholderType());
 
   checkAddressSpaceCast(SrcType, DestType);
+  if (SrcExpr.isInvalid())
+    return;
+
+  checkPalisadeCast(SrcType, DestType);
   if (SrcExpr.isInvalid())
     return;
 

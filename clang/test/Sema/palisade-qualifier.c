@@ -3,7 +3,7 @@
 // RUN: %clang_cc1 -triple thumbv8.1m.main-none-eabi -fpalisade -std=c23 -fsyntax-only -ferror-limit 0 -verify %s
 
 // Type identity, propagation and the existing address-space diagnostics.
-// Explicit casts and raw-address construction remain deferred policy.
+// Palisade's rules for casts, function pointers, comparisons and return types.
 #define SAME(A, B) __builtin_types_compatible_p(A, B)
 #define CHECK_TYPE(E, T) _Static_assert(SAME(__typeof__(E), T), #E)
 
@@ -129,6 +129,9 @@ int *return_wrong_ordinary(__protected int *p) {
 __protected int *return_wrong_protected(int *p) {
   return p; // expected-error {{changes address space of pointer}}
 }
+// A return value has no storage to protect.
+__protected int qualified_return(void); // expected-error {{return type cannot be qualified with address space}}
+int *__protected qualified_pointer_return(void); // expected-error {{return type cannot be qualified with address space}}
 
 // Distinguish immediate slot mismatches from nested pointee mismatches.
 // A third indirection checks that the nested comparison continues recursively.
@@ -152,6 +155,23 @@ void void_conversions(__protected int *p, __protected void *v, void *ordinary) {
   v = ordinary; // expected-error {{changes address space of pointer}}
 }
 
+// Casts can't make a pointer to protected storage from an ordinary pointer or
+// an integer, at any level. Casting out of protected storage and casting a
+// null pointer constant stay valid.
+void casts(int *ordinary, __protected int *p, int **ordinary_slot,
+           int *__protected *slot, __UINTPTR_TYPE__ address) {
+  (void)(int *)p;
+  (void)(int **)&p;
+  (void)(__protected void *)p;
+  (void)(__protected int *)0;
+  (void)(__protected int *)(void *)0;
+  (void)(__protected int *)ordinary; // expected-error {{casting 'int *' to type '__protected int *' changes address space of pointer}}
+  (void)(__protected int **)ordinary_slot; // expected-error {{changes address space of nested pointer}}
+  (void)(__protected int *__protected *)slot; // expected-error {{changes address space of nested pointer}}
+  (void)(__protected int *)address; // expected-error {{cannot cast integer type}}
+  (void)(__protected int *)0x20001000; // expected-error {{cannot cast integer type 'int' to pointer to protected storage '__protected int *'}}
+}
+
 void pointer_operators(int condition, int *ordinary,
                       __protected int *p, __protected int *q,
                       __protected void *v) {
@@ -161,6 +181,9 @@ void pointer_operators(int condition, int *ordinary,
   (void)(condition ? p : ordinary); // expected-error {{pointers to non-overlapping address spaces}}
   (void)(p - q);
   (void)(ordinary - p); // expected-error {{pointers to non-overlapping address spaces}}
+  (void)(p == v);
+  (void)(p == ordinary); // expected-error {{('__protected int *' and 'int *') which are pointers to non-overlapping address spaces}}
+  (void)(ordinary < p); // expected-error {{pointers to non-overlapping address spaces}}
 }
 
 // Function-pointer storage is qualifiable; function types themselves are not.
@@ -168,6 +191,31 @@ typedef int function_type(void);
 function_type *__protected callback;
 CHECK_TYPE(&callback, function_type *__protected *);
 __protected function_type invalid_function; // expected-error {{function type may not be qualified with an address space}}
+
+// A function with pointers to protected storage in its signature only converts
+// to the same function type, or a call could pass it ordinary pointers.
+void store_protected(__protected int *);
+void store_ordinary(int *);
+void register_protected(void (*)(__protected int *));
+typedef void (*ordinary_function)(int *);
+typedef void (*protected_function)(__protected int *);
+typedef void (*unprototyped_function)();
+void function_pointers(void *v) {
+  protected_function same = (protected_function)store_protected;
+  ordinary_function unrelated = (ordinary_function)(void *)store_ordinary;
+  protected_function null = (protected_function)0;
+  (void)(ordinary_function)store_protected; // expected-error {{conversion from 'void (*)(__protected int *)' to 'ordinary_function' (aka 'void (*)(int *)') changes the signature of a function with pointers to protected storage}}
+  (void)(protected_function)store_ordinary; // expected-error {{changes the signature of a function with pointers to protected storage}}
+  (void)(unprototyped_function)store_protected; // expected-error {{changes the signature of a function with pointers to protected storage}}
+  (void)(void (*)(ordinary_function))register_protected; // expected-error {{changes the signature of a function with pointers to protected storage}}
+  (void)(void *)store_protected; // expected-error {{changes the signature of a function with pointers to protected storage}}
+  (void)(__UINTPTR_TYPE__)store_protected; // expected-error {{changes the signature of a function with pointers to protected storage}}
+  (void)(protected_function)v; // expected-error {{changes the signature of a function with pointers to protected storage}}
+  ordinary_function implicit = store_protected; // expected-error {{changes the signature of a function with pointers to protected storage}}
+  unprototyped_function implicit_unprototyped = store_protected; // expected-error {{changes the signature of a function with pointers to protected storage}}
+  void *implicit_void = store_protected; // expected-error {{changes the signature of a function with pointers to protected storage}}
+  protected_function implicit_from_void = v; // expected-error {{changes the signature of a function with pointers to protected storage}}
+}
 
 // Duplicate and conflicting qualifiers, including qualifiers hidden by aliases.
 // Both attribute orders matter: they use different attribute handlers.

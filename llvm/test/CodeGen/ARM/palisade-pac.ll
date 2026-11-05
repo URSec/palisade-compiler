@@ -9,10 +9,13 @@ define i32 @sign(ptr addrspace(200) %p, i32 %modifier) {
   ret i32 %pac
 }
 
-; The store through the checked pointer stays after AUTG.
+; A null pointer skips the check. The store through the checked pointer stays
+; after AUTG.
 define void @auth(ptr addrspace(200) %p, i32 %pac, i32 %modifier, i32 %x) {
 ; CHECK-LABEL: auth:
-; CHECK:       autg r1, r0, r2
+; CHECK:       cmp r0, #0
+; CHECK-NEXT:  it ne
+; CHECK-NEXT:  autgne r1, r0, r2
 ; CHECK-NEXT:  str r3, [r0]
 ; CHECK-NEXT:  bx lr
   %q = call ptr addrspace(200) @llvm.arm.protected.auth(ptr addrspace(200) %p, i32 %pac, i32 %modifier)
@@ -28,7 +31,9 @@ define void @conditional(ptr addrspace(200) %p, i32 %pac, i32 %modifier, ptr %fl
 ; CHECK:       beq .LBB2_1
 ; CHECK-NEXT:  @ %bb.3: @ %then
 ; CHECK:       mov r4, r0
-; CHECK-NEXT:  autg r1, r4, r2
+; CHECK-NEXT:  cmp r4, #0
+; CHECK-NEXT:  it ne
+; CHECK-NEXT:  autgne r1, r4, r2
 ; CHECK-NEXT:  str.w r12, [r4]
 entry:
   br label %loop

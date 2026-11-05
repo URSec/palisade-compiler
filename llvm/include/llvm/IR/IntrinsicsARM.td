@@ -1510,6 +1510,7 @@ def int_arm_protected_sign
 // Check a protected pointer against its PAC and modifier, and return the
 // pointer, so its uses depend on the check. It faults on a mismatch, so it is
 // not speculatable.
+// A null pointer constant skips the check.
 def int_arm_protected_auth
     : DefaultAttrsIntrinsic<[LLVMQualPointerType<200>],
                             [LLVMQualPointerType<200>, llvm_i32_ty,

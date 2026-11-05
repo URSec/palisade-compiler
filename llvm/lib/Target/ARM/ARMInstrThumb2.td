@@ -5906,23 +5906,22 @@ let isReturn = 1, isTerminator = 1, isBarrier = 1 in {
 // Palisade pointer authentication.
 // PACG computes a protected pointer's PAC.
 // AUTG checks it and writes no register.
+// A null pointer constant skips the AUTG check.
 // hasSideEffects stops machine passes from hoisting it onto paths where
 // it would fault.
 let Predicates = [IsThumb2, HasV8_1MMainline, HasPACBTI] in {
   def : Pat<(int_arm_protected_sign GPRnopc:$value, GPRnopc:$modifier),
             (t2PACG GPRnopc:$value, GPRnopc:$modifier)>;
 
-  let hasSideEffects = 1, Constraints = "$dst = $value" in
+  let hasSideEffects = 1, Constraints = "$dst = $value", Defs = [CPSR] in
   def t2AUTG_PROTECTED
-      : t2PseudoExpand<(outs GPRnopc:$dst),
-                       (ins GPRnopc:$value, GPRnosp:$pac, GPRnopc:$modifier),
-                       4, NoItinerary,
-                       [(set GPRnopc:$dst,
-                             (int_arm_protected_auth GPRnopc:$value,
-                                                     GPRnosp:$pac,
-                                                     GPRnopc:$modifier))],
-                       (t2AUTG (ops 14, zero_reg), GPRnosp:$pac,
-                               GPRnopc:$value, GPRnopc:$modifier)>;
+      : t2PseudoInst<(outs GPRnopc:$dst),
+                     (ins GPRnopc:$value, GPRnosp:$pac, GPRnopc:$modifier),
+                     10, NoItinerary,
+                     [(set GPRnopc:$dst,
+                           (int_arm_protected_auth GPRnopc:$value,
+                                                   GPRnosp:$pac,
+                                                   GPRnopc:$modifier))]>;
 }
 
 class PACBTIHintSpaceInst<string asm, string ops, bits<8> imm>

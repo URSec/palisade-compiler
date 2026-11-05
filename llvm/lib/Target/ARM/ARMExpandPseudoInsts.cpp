@@ -3285,6 +3285,23 @@ bool ARMExpandPseudo::ExpandMI(MachineBasicBlock &MBB,
       MI.eraseFromParent();
       return true;
     }
+    case ARM::t2AUTG_PROTECTED: {
+      // Palisade: authenticate a pointer using AUTG.
+      // Check if pointer is null and skip check for null constant.
+      Register Value = MI.getOperand(1).getReg();
+      BuildMI(MBB, MBBI, MI.getDebugLoc(), TII->get(ARM::t2CMPri))
+          .addReg(Value)
+          .addImm(0)
+          .add(predOps(ARMCC::AL));
+      BuildMI(MBB, MBBI, MI.getDebugLoc(), TII->get(ARM::t2AUTG))
+          .addImm(ARMCC::NE)
+          .addReg(ARM::CPSR, RegState::Kill)
+          .add(MI.getOperand(2))
+          .addReg(Value)
+          .add(MI.getOperand(3));
+      MI.eraseFromParent();
+      return true;
+    }
     case ARM::LOADDUAL:
     case ARM::STOREDUAL: {
       Register PairReg = MI.getOperand(0).getReg();

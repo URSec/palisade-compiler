@@ -76,6 +76,12 @@ static std::string computeARMDataLayout(const Triple &TT, StringRef ABIName) {
   else
     Ret += "-S32";
 
+  // Palisade for M-profile: a protected pointer in address space 200 is
+  // non-integral. Such pointer carries additional metadata: PAC,
+  // so optimizations must not move it as an integer.
+  if (TT.isArmMClass())
+    Ret += "-ni:200";
+
   return Ret;
 }
 

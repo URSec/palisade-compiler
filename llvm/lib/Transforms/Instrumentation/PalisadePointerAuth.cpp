@@ -17,6 +17,9 @@
 // Run this pass at very late end so that SORA can remove many unused PAC
 // slot for a fat pointer.
 //
+// For global intialized pointer, create a constructor to sign the pointer
+// so that it can be authenticate at runtime.
+//
 // Atomics and MVE are currently not supported.
 //
 //===----------------------------------------------------------------------===//
@@ -24,6 +27,7 @@
 #include "llvm/Transforms/Instrumentation/PalisadePointerAuth.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/Analysis/ConstantFolding.h"
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/IRBuilder.h"
@@ -31,6 +35,7 @@
 #include "llvm/IR/IntrinsicsARM.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Transforms/Utils/ModuleUtils.h"
 #include <optional>
 
 using namespace llvm;
@@ -61,11 +66,21 @@ bool needsPAC(Instruction &I, Type *ValueTy) {
                      false);
 }
 
+[[noreturn]] void reportUnsupported(const GlobalVariable &GV,
+                                    const Twine &Reason) {
+  report_fatal_error(Twine("Palisade pointer auth: ") + Reason +
+                         ", in global '" + GV.getName() + "'",
+                     false);
+}
+
 class PointerAuth {
+  Module &M;
   const DataLayout &DL;
   IntegerType *Int32Ty;
   SmallVector<StoreInst *> Stores;
   SmallVector<LoadInst *> Loads;
+  // Non-null protected pointers in global initializers, by global and offset.
+  SmallVector<std::pair<GlobalVariable *, uint64_t>> InitializedGlobalPtrs;
 
   // The size of a local or global definition.
   std::optional<uint64_t> getObjectSize(Value *Object) {
@@ -96,6 +111,14 @@ class PointerAuth {
   // Grow such objects back so each protected pointer has room for its PAC.
   void growObjects() {
     DenseMap<Value *, uint64_t> NewSizes;
+    // Object needs room for a pointer and its PAC at Offset.
+    auto NeedRoom = [&](Value *Object, uint64_t Offset) {
+      uint64_t End = Offset + PointerPairSize;
+      if (End > *getObjectSize(Object)) {
+        uint64_t &NewSize = NewSizes[Object];
+        NewSize = std::max(NewSize, End);
+      }
+    };
     auto AddAccess = [&](Instruction *I) {
       Value *PointerAddr = getLoadStorePointerOperand(I);
       APInt Offset(DL.getIndexTypeSizeInBits(PointerAddr->getType()), 0);
@@ -103,11 +126,7 @@ class PointerAuth {
           DL, Offset, /*AllowNonInbounds=*/true);
       std::optional<uint64_t> Size = getObjectSize(Base);
       if (Size && !Offset.isNegative()) {
-        uint64_t End = Offset.getZExtValue() + PointerPairSize;
-        if (End > *Size) {
-          uint64_t &NewSize = NewSizes[Base];
-          NewSize = std::max(NewSize, End);
-        }
+        NeedRoom(Base, Offset.getZExtValue());
         return;
       }
 
@@ -121,14 +140,60 @@ class PointerAuth {
       AddAccess(SI);
     for (LoadInst *LI : Loads)
       AddAccess(LI);
+    for (auto [GV, Offset] : InitializedGlobalPtrs)
+      NeedRoom(GV, Offset);
 
     for (auto [Object, NewSize] : NewSizes)
       grow(Object, NewSize);
   }
 
+  // Find the non-null protected pointers.
+  void findInitializedGlobalPtrs(GlobalVariable &GV, Constant *C,
+                                 uint64_t Offset) {
+    // Null, zero, undef, numbers and byte strings hold no pointer to sign.
+    if (isa<ConstantData>(C))
+      return;
+
+    if (isProtectedPointer(C->getType())) {
+      // The PAC goes in the word after the pointer and initialized to be
+      // 0 in clang.
+      Constant *PACWord = ConstantFoldLoadFromConst(
+          GV.getInitializer(), Int32Ty, APInt(64, Offset + PACOffset), DL);
+
+      if (!PACWord || !(PACWord->isNullValue() || isa<UndefValue>(PACWord)))
+        reportUnsupported(GV, "protected pointer without room for its PAC");
+
+      InitializedGlobalPtrs.push_back({&GV, Offset});
+      return;
+    }
+
+    // initialized aggregate
+    if (auto *ST = dyn_cast<StructType>(C->getType())) {
+      const StructLayout *Layout = DL.getStructLayout(ST);
+      for (unsigned I = 0, E = ST->getNumElements(); I != E; ++I)
+        findInitializedGlobalPtrs(
+            GV, C->getAggregateElement(I),
+            Offset + Layout->getElementOffset(I).getFixedValue());
+
+    } else if (auto *AT = dyn_cast<ArrayType>(C->getType())) {
+      uint64_t Stride = DL.getTypeAllocSize(AT->getElementType());
+      for (uint64_t I = 0, E = AT->getNumElements(); I != E; ++I)
+        findInitializedGlobalPtrs(GV, C->getAggregateElement(I),
+                                  Offset + I * Stride);
+    }
+  }
+
   Value *getPACAddress(IRBuilder<> &B, Value *PointerAddr) {
     return B.CreateInBoundsPtrAdd(PointerAddr, B.getInt32(PACOffset),
                                   "palisade.pac.addr");
+  }
+
+  // Sign the pointer with its address.
+  Value *createPAC(IRBuilder<> &B, Value *Ptr, Value *PointerAddr) {
+    Value *Modifier =
+        B.CreatePtrToInt(PointerAddr, Int32Ty, "palisade.modifier");
+    return B.CreateIntrinsic(Intrinsic::arm_protected_sign, {Ptr, Modifier}, {},
+                             "palisade.pac");
   }
 
   // Store the PAC after the pointer.
@@ -140,10 +205,7 @@ class PointerAuth {
 
     Value *PointerAddr = SI->getPointerOperand();
     IRBuilder<> B(SI);
-    Value *Modifier =
-        B.CreatePtrToInt(PointerAddr, Int32Ty, "palisade.modifier");
-    Value *PAC = B.CreateIntrinsic(Intrinsic::arm_protected_sign,
-                                   {Ptr, Modifier}, {}, "palisade.pac");
+    Value *PAC = createPAC(B, Ptr, PointerAddr);
     B.SetInsertPoint(SI->getNextNode());
     B.CreateAlignedStore(PAC, getPACAddress(B, PointerAddr),
                          commonAlignment(SI->getAlign(), PACOffset),
@@ -166,9 +228,51 @@ class PointerAuth {
                           [Checked](Use &U) { return U.getUser() != Checked; });
   }
 
+  // Sign the pointers globals are initialized with, in a constructor that runs
+  // at boot before other constructors.
+  void signInitializedGlobalPtrs() {
+    if (InitializedGlobalPtrs.empty())
+      return;
+
+    LLVMContext &Ctx = M.getContext();
+    Function *F = Function::createWithDefaultAttr(
+        FunctionType::get(Type::getVoidTy(Ctx), /*isVarArg=*/false),
+        GlobalValue::InternalLinkage, DL.getProgramAddressSpace(),
+        "palisade.sign.globals", &M);
+    F->setDoesNotThrow();
+    IRBuilder<> B(BasicBlock::Create(Ctx, "", F));
+    for (auto [GV, Offset] : InitializedGlobalPtrs) {
+      // A constant global lives in flash, where the PAC can't be written.
+      if (GV->isConstant()) {
+        if (GV->hasSection())
+          reportUnsupported(*GV, "protected pointer in a constant global with "
+                                 "an explicit section");
+        GV->setConstant(false);
+      }
+
+      // Sign the pointer in memory
+      Value *PointerAddr = B.CreateInBoundsPtrAdd(GV, B.getInt32(Offset));
+      Align PointerAlign = commonAlignment(GV->getPointerAlignment(DL), Offset);
+      Value *Ptr = B.CreateAlignedLoad(B.getPtrTy(ProtectedAddressSpace),
+                                       PointerAddr, PointerAlign);
+      B.CreateAlignedStore(createPAC(B, Ptr, PointerAddr),
+                           getPACAddress(B, PointerAddr),
+                           commonAlignment(PointerAlign, PACOffset));
+    }
+    B.CreateRetVoid();
+    appendToGlobalCtors(M, F, /*Priority=*/0);
+  }
+
 public:
   PointerAuth(Module &M)
-      : DL(M.getDataLayout()), Int32Ty(Type::getInt32Ty(M.getContext())) {}
+      : M(M), DL(M.getDataLayout()), Int32Ty(Type::getInt32Ty(M.getContext())) {
+  }
+
+  void collect(GlobalVariable &GV) {
+    if (!GV.isDeclarationForLinker() &&
+        GV.getAddressSpace() != ProtectedAddressSpace)
+      findInitializedGlobalPtrs(GV, GV.getInitializer(), 0);
+  }
 
   void collect(Function &F) {
     for (Instruction &I : instructions(F)) {
@@ -183,7 +287,7 @@ public:
   }
 
   bool instrument() {
-    if (Stores.empty() && Loads.empty())
+    if (Stores.empty() && Loads.empty() && InitializedGlobalPtrs.empty())
       return false;
 
     growObjects();
@@ -191,6 +295,7 @@ public:
       signStore(SI);
     for (LoadInst *LI : Loads)
       authLoad(LI);
+    signInitializedGlobalPtrs();
     return true;
   }
 };
@@ -200,6 +305,8 @@ public:
 PreservedAnalyses PalisadePointerAuthPass::run(Module &M,
                                                ModuleAnalysisManager &AM) {
   PointerAuth Auth(M);
+  for (GlobalVariable &GV : M.globals())
+    Auth.collect(GV);
   for (Function &F : M)
     if (!F.isDeclaration())
       Auth.collect(F);

@@ -20,7 +20,8 @@ namespace llvm {
 
 /// Sign a protected pointer when it is stored to ordinary memory, and
 /// authenticate it when it is loaded back, using the address of pointer
-/// as modifier (&p).
+/// as modifier (&p). Protected pointers in global initializers are signed at
+/// boot.
 class PalisadePointerAuthPass
     : public RequiredPassInfoMixin<PalisadePointerAuthPass> {
 public:

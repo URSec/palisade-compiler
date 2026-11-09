@@ -8,7 +8,19 @@ target triple = "thumbv8.1m.main-none-eabi"
 ; GlobalOpt shrank this global to the pointer alone, so it grows back.
 ; CHECK: @shrunk = internal global { ptr addrspace(200), [4 x i8] } zeroinitializer, align 4
 @shrunk = internal global ptr addrspace(200) null, align 4
-@protected_ptr = addrspace(200) global { ptr addrspace(200), i32 } zeroinitializer, align 4
+; Protected memory is trusted, so its initializer is not signed.
+@protected_ptr = addrspace(200) global { ptr addrspace(200), i32 } { ptr addrspace(200) @value, i32 0 }, align 4
+@value = addrspace(200) global i32 0, align 4
+
+; A pointer in an initializer is signed at boot by a constructor.
+; CHECK: @initialized = global { ptr addrspace(200), i32 } { ptr addrspace(200) @value, i32 0 }, align 4
+@initialized = global { ptr addrspace(200), i32 } { ptr addrspace(200) @value, i32 0 }, align 4
+; A constant moves out of flash to hold its PAC. Its null entry is not signed.
+; CHECK: @table = global [2 x { { ptr addrspace(200), i32 }, i32 }]
+@table = constant [2 x { { ptr addrspace(200), i32 }, i32 }] [{ { ptr addrspace(200), i32 }, i32 } { { ptr addrspace(200), i32 } zeroinitializer, i32 1 }, { { ptr addrspace(200), i32 }, i32 } { { ptr addrspace(200), i32 } { ptr addrspace(200) @value, i32 0 }, i32 2 }], align 4
+; CHECK: @shrunk_initialized = internal global { ptr addrspace(200), [4 x i8] } { ptr addrspace(200) @value, [4 x i8] zeroinitializer }, align 4
+@shrunk_initialized = internal global ptr addrspace(200) @value, align 4
+; CHECK: @llvm.global_ctors = appending global [1 x { i32, ptr, ptr }] [{ i32, ptr, ptr } { i32 0, ptr @palisade.sign.globals, ptr null }]
 
 ; A store signs the pointer with its address, and stores the PAC after it.
 define void @store(ptr addrspace(200) %p) {
@@ -103,3 +115,17 @@ define void @grow(ptr addrspace(200) %p) {
 }
 
 declare void @use(ptr)
+
+; The constructor signs the pointers in memory, after the linker has picked
+; each global's definition.
+; CHECK-LABEL: define internal void @palisade.sign.globals(
+; CHECK-NEXT: [[P:%.*]] = load ptr addrspace(200), ptr @initialized, align 4
+; CHECK-NEXT: %palisade.pac = call i32 @llvm.arm.protected.sign(ptr addrspace(200) [[P]], i32 ptrtoint (ptr @initialized to i32))
+; CHECK-NEXT: store i32 %palisade.pac, ptr getelementptr inbounds (i8, ptr @initialized, i32 4), align 4
+; CHECK-NEXT: [[P:%.*]] = load ptr addrspace(200), ptr getelementptr inbounds (i8, ptr @table, i32 12), align 4
+; CHECK-NEXT: %palisade.pac1 = call i32 @llvm.arm.protected.sign(ptr addrspace(200) [[P]], i32 ptrtoint (ptr getelementptr inbounds (i8, ptr @table, i32 12) to i32))
+; CHECK-NEXT: store i32 %palisade.pac1, ptr getelementptr inbounds (i8, ptr getelementptr inbounds (i8, ptr @table, i32 12), i32 4), align 4
+; CHECK-NEXT: [[P:%.*]] = load ptr addrspace(200), ptr @shrunk_initialized, align 4
+; CHECK-NEXT: %palisade.pac2 = call i32 @llvm.arm.protected.sign(ptr addrspace(200) [[P]], i32 ptrtoint (ptr @shrunk_initialized to i32))
+; CHECK-NEXT: store i32 %palisade.pac2, ptr getelementptr inbounds (i8, ptr @shrunk_initialized, i32 4), align 4
+; CHECK-NEXT: ret void

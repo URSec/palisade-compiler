@@ -23,6 +23,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "ARM.h"
+#include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/ScalarEvolution.h"
@@ -43,6 +44,7 @@ using namespace llvm;
 #define DEBUG_TYPE "arm-palisade-store-harden-hoist"
 
 STATISTIC(NumGuarded, "Number of loops given a hoisted store-range check");
+STATISTIC(NumChecks, "Number of TTT range checks emitted");
 STATISTIC(NumStores, "Number of FP stores kept native behind a range check");
 
 namespace {
@@ -52,12 +54,18 @@ namespace {
 // unprivileged store to the address is allowed.
 constexpr uint32_t TTMask = (1u << 16) | (1u << 19);
 
-// One floating-point store proven to stay inside a single invariant range.
+// One floating-point store and the bytes [Lo, Hi] it may write while the loop.
 struct GuardedStore {
   StoreInst *Store;
   const SCEV *Lo;
-  const SCEV *End;
-  uint64_t Size;
+  const SCEV *Hi;
+};
+
+// Stores into one object, grouped together by one range [Lo, Hi].
+struct GuardedRange {
+  const SCEV *Lo;
+  const SCEV *Hi;
+  SmallVector<StoreInst *, 8> Stores;
 };
 
 class ARMPalisadeStoreHardenHoist : public FunctionPass {
@@ -83,9 +91,18 @@ private:
   ScalarEvolution *SE = nullptr;
   LoopInfo *LI = nullptr;
   DominatorTree *DT = nullptr;
+  DenseMap<const Loop *, bool> Checkable;
 
-  bool collectLoop(Loop *L, SmallVectorImpl<GuardedStore> &Out);
-  void applyGuard(Loop *L, ArrayRef<GuardedStore> Stores);
+  bool canCheckBefore(const Loop *L);
+  bool canExpandBefore(const GuardedStore &GS, const Loop *L);
+  const SCEVAddRecExpr *increasingRecurrence(const SCEV *S, const Loop *L);
+  const SCEV *lowestInLoop(const SCEV *S, const Loop *L);
+  const SCEV *highestInLoop(const SCEV *S, const Loop *L);
+  std::optional<GuardedStore> rangeInLoop(StoreInst *SI, Loop *L);
+  Loop *hoistCheck(GuardedStore &GS, Loop *L);
+  void mergeIntoRanges(SmallVectorImpl<GuardedRange> &Ranges,
+                       const GuardedStore &GS);
+  void applyGuard(Loop *L, ArrayRef<GuardedRange> Ranges);
 };
 
 } // end anonymous namespace
@@ -101,72 +118,144 @@ static bool isLoopCallSafe(const Loop *L) {
   return true;
 }
 
-// Gather the FP stores of L whose address is an affine recurrence of L with a
-// known-positive step, recording each one's written byte range.
-bool ARMPalisadeStoreHardenHoist::collectLoop(
-    Loop *L, SmallVectorImpl<GuardedStore> &Out) {
+// A check can be hoisted before L if L has a preheader and a latch and is
+// call-free.
+bool ARMPalisadeStoreHardenHoist::canCheckBefore(const Loop *L) {
+  auto [It, Inserted] = Checkable.try_emplace(L, false);
+  if (Inserted)
+    It->second =
+        L->getLoopPreheader() && L->getLoopLatch() && isLoopCallSafe(L);
+  return It->second;
+}
 
-  if (!L->getLoopPreheader() || !L->getLoopLatch())
-    return false;
+// Whether both bounds of lo,hi can be computed before the loop.
+bool ARMPalisadeStoreHardenHoist::canExpandBefore(const GuardedStore &GS,
+                                                  const Loop *L) {
+  SCEVExpander Check(*SE, "palisade.check");
+  const Instruction *IP = L->getLoopPreheader()->getTerminator();
+  return Check.isSafeToExpandAt(GS.Lo, IP) && Check.isSafeToExpandAt(GS.Hi, IP);
+}
 
-  if (!isLoopCallSafe(L))
-    return false;
+// S as a recurrence of {Start,+,Step}<L> with known-positive Step.
+const SCEVAddRecExpr *
+ARMPalisadeStoreHardenHoist::increasingRecurrence(const SCEV *S,
+                                                  const Loop *L) {
+  const auto *AR = dyn_cast<SCEVAddRecExpr>(S);
+  if (!AR || AR->getLoop() != L || !AR->isAffine())
+    return nullptr;
+
+  const SCEV *Step = AR->getStepRecurrence(*SE);
+  if (!SE->isLoopInvariant(Step, L) || !SE->isKnownPositive(Step))
+    return nullptr;
+  return AR;
+}
+
+// The lowest value S takes when L runs, or null if unknown.
+const SCEV *ARMPalisadeStoreHardenHoist::lowestInLoop(const SCEV *S,
+                                                      const Loop *L) {
+  if (SE->isLoopInvariant(S, L))
+    return S;
+  const SCEVAddRecExpr *AR = increasingRecurrence(S, L);
+  return AR ? AR->getStart() : nullptr;
+}
+
+// The highest value S takes when L runs, or null if unknown.
+const SCEV *ARMPalisadeStoreHardenHoist::highestInLoop(const SCEV *S,
+                                                       const Loop *L) {
+  if (SE->isLoopInvariant(S, L))
+    return S;
+  const SCEVAddRecExpr *AR = increasingRecurrence(S, L);
+  if (!AR)
+    return nullptr;
 
   // Must be SCEV computable for trip count.
   const SCEV *BTC = SE->getBackedgeTakenCount(L);
   if (isa<SCEVCouldNotCompute>(BTC))
-    return false;
+    return nullptr;
+  return AR->evaluateAtIteration(BTC, *SE);
+}
 
-  const DataLayout &DL = L->getHeader()->getModule()->getDataLayout();
-  SCEVExpander Check(*SE, "palisade.check");
+// The bytes range that stores may write when L runs.
+std::optional<GuardedStore>
+ARMPalisadeStoreHardenHoist::rangeInLoop(StoreInst *SI, Loop *L) {
+  if (!SI->isSimple())
+    return std::nullopt;
 
-  const Instruction *IP = L->getLoopPreheader()->getTerminator();
+  // Only for FP
+  Type *Ty = SI->getValueOperand()->getType();
+  if (!Ty->isFloatTy() && !Ty->isDoubleTy())
+    return std::nullopt;
 
-  for (BasicBlock *BB : L->blocks()) {
-    // Only handle the innder most loop.
-    if (LI->getLoopFor(BB) != L)
-      continue;
-    for (Instruction &I : *BB) {
-      auto *SI = dyn_cast<StoreInst>(&I);
-      if (!SI || !SI->isSimple())
-        continue;
+  // addrspace 200 is already privileged.
+  if (SI->getPointerAddressSpace() != 0)
+    return std::nullopt;
 
-      // Only for FP
-      Type *Ty = SI->getValueOperand()->getType();
-      if (!Ty->isFloatTy() && !Ty->isDoubleTy())
-        continue;
+  // Index must be monotone.
+  const SCEV *Ptr = SE->getSCEV(SI->getPointerOperand());
+  const auto *AR = dyn_cast<SCEVAddRecExpr>(Ptr);
+  if (!AR || AR->getLoop() != L)
+    return std::nullopt;
 
-      // addrspace 200 is already privileged.
-      if (SI->getPointerAddressSpace() != 0)
-        continue;
+  // lo = first element's address, end = last element's address.
+  const SCEV *Lo = lowestInLoop(Ptr, L);
+  const SCEV *End = highestInLoop(Ptr, L);
+  if (!Lo || !End)
+    return std::nullopt;
 
-      // Index must be monotone.
-      const SCEV *Ptr = SE->getSCEV(SI->getPointerOperand());
-      const auto *AR = dyn_cast<SCEVAddRecExpr>(Ptr);
-      if (!AR || AR->getLoop() != L || !AR->isAffine())
-        continue;
+  // Last written byte: End + (Size - 1).
+  uint64_t Size = SI->getDataLayout().getTypeStoreSize(Ty);
+  Type *IntTy = SE->getEffectiveSCEVType(End->getType());
+  const SCEV *Hi = SE->getAddExpr(End, SE->getConstant(IntTy, Size - 1));
 
-      // Get recurrence
-      const SCEV *Step = AR->getStepRecurrence(*SE);
-      if (!SE->isLoopInvariant(Step, L) || !SE->isKnownPositive(Step))
-        continue;
+  GuardedStore GS = {SI, Lo, Hi};
+  if (!canExpandBefore(GS, L))
+    return std::nullopt;
+  return GS;
+}
 
-      // lo = first element's address,
-      // end = last element's address.
-      const SCEV *Lo = AR->getStart();
-      const SCEV *End = AR->evaluateAtIteration(BTC, *SE);
-      uint64_t Size = DL.getTypeStoreSize(Ty);
-      if (!Check.isSafeToExpandAt(Lo, IP) || !Check.isSafeToExpandAt(End, IP))
-        continue;
+// Move checks from before L out through the enclosing loops it can be
+// placed before.
+Loop *ARMPalisadeStoreHardenHoist::hoistCheck(GuardedStore &GS, Loop *L) {
+  while (Loop *Outer = L->getParentLoop()) {
+    if (!canCheckBefore(Outer))
+      break;
 
-      Out.push_back({SI, Lo, End, Size});
-    }
+    const SCEV *Lo = lowestInLoop(GS.Lo, Outer);
+    const SCEV *Hi = highestInLoop(GS.Hi, Outer);
+    if (!Lo || !Hi)
+      break;
+
+    GuardedStore Wide = {GS.Store, Lo, Hi};
+    if (!canExpandBefore(Wide, Outer))
+      break;
+
+    GS = Wide;
+    L = Outer;
   }
-  return !Out.empty();
+  return L;
+}
+
+// Merge checks for the same memory objects in the loop.
+void ARMPalisadeStoreHardenHoist::mergeIntoRanges(
+    SmallVectorImpl<GuardedRange> &Ranges, const GuardedStore &GS) {
+  for (GuardedRange &R : Ranges) {
+    std::optional<APInt> LoDiff = SE->computeConstantDifference(GS.Lo, R.Lo);
+    std::optional<APInt> HiDiff = SE->computeConstantDifference(GS.Hi, R.Hi);
+    if (!LoDiff || !HiDiff)
+      continue;
+
+    if (LoDiff->isNegative())
+      R.Lo = GS.Lo;
+    if (HiDiff->isStrictlyPositive())
+      R.Hi = GS.Hi;
+    R.Stores.push_back(GS.Store);
+    return;
+  }
+  Ranges.push_back({GS.Lo, GS.Hi, {GS.Store}});
 }
 
 void ARMPalisadeStoreHardenHoist::applyGuard(Loop *L,
-                                             ArrayRef<GuardedStore> Stores) {
+                                             ArrayRef<GuardedRange> Ranges) {
   BasicBlock *PH = L->getLoopPreheader();
   Function *F = PH->getParent();
   LLVMContext &Ctx = F->getContext();
@@ -182,14 +271,9 @@ void ARMPalisadeStoreHardenHoist::applyGuard(Loop *L,
 
   // Create check instructions (TTT)
   Value *AllOK = nullptr;
-  for (const GuardedStore &GS : Stores) {
-    Value *LoP = Expander.expandCodeFor(GS.Lo, I8Ptr, IP);
-    Value *EndP = Expander.expandCodeFor(GS.End, I8Ptr, IP);
-
-    // Last written byte: End + (Size - 1).
-    Value *HiP = GS.Size > 1 ? B.CreateInBoundsGEP(B.getInt8Ty(), EndP,
-                                                   B.getInt32(GS.Size - 1))
-                             : EndP;
+  for (const GuardedRange &R : Ranges) {
+    Value *LoP = Expander.expandCodeFor(R.Lo, I8Ptr, IP);
+    Value *HiP = Expander.expandCodeFor(R.Hi, I8Ptr, IP);
 
     // Test target on Low
     Value *TLo =
@@ -207,7 +291,7 @@ void ARMPalisadeStoreHardenHoist::applyGuard(Loop *L,
                                      ConstantInt::get(B.getInt32Ty(), TTMask));
     Value *Cond = B.CreateAnd(SameRegion, Writable);
     AllOK = AllOK ? B.CreateAnd(AllOK, Cond) : Cond;
-    ++NumStores;
+    ++NumChecks;
   }
 
   // On failure trap.
@@ -225,8 +309,11 @@ void ARMPalisadeStoreHardenHoist::applyGuard(Loop *L,
 
   // Tag the proven stores so store hardening keeps them unchanged.
   MDNode *Tag = MDNode::get(Ctx, {});
-  for (const GuardedStore &GS : Stores)
-    GS.Store->setMetadata("palisade.noharden", Tag);
+  for (const GuardedRange &R : Ranges)
+    for (StoreInst *SI : R.Stores) {
+      SI->setMetadata("palisade.noharden", Tag);
+      ++NumStores;
+    }
 
   ++NumGuarded;
 }
@@ -239,17 +326,35 @@ bool ARMPalisadeStoreHardenHoist::runOnFunction(Function &F) {
   LI = &getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
   DT = &getAnalysis<DominatorTreeWrapperPass>().getDomTree();
 
-  // Find the stores in the loop that its check can be hoisted.
-  SmallVector<std::pair<Loop *, SmallVector<GuardedStore, 4>>, 8> Work;
+  Checkable.clear();
+
+  // For each FP store whose check can be hoisted, find the outermost loop its
+  // check can be placed before, and merge it there with the stores into the
+  // same object.
+  MapVector<Loop *, SmallVector<GuardedRange, 4>> Work;
   for (Loop *L : LI->getLoopsInPreorder()) {
-    SmallVector<GuardedStore, 4> Stores;
-    if (collectLoop(L, Stores))
-      Work.emplace_back(L, std::move(Stores));
+    if (!canCheckBefore(L))
+      continue;
+    for (BasicBlock *BB : L->blocks()) {
+      // Only handle the innder most loop.
+      if (LI->getLoopFor(BB) != L)
+        continue;
+      for (Instruction &I : *BB) {
+        auto *SI = dyn_cast<StoreInst>(&I);
+        if (!SI)
+          continue;
+        std::optional<GuardedStore> GS = rangeInLoop(SI, L);
+        if (!GS)
+          continue;
+        Loop *Target = hoistCheck(*GS, L);
+        mergeIntoRanges(Work[Target], *GS);
+      }
+    }
   }
 
   // Hoist the checks outside the loop
-  for (auto &[L, Stores] : Work)
-    applyGuard(L, Stores);
+  for (auto &[L, Ranges] : Work)
+    applyGuard(L, Ranges);
 
   return !Work.empty();
 }

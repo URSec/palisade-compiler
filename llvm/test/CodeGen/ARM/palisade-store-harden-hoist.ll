@@ -33,6 +33,42 @@ exit:
   ret void
 }
 
+; Two stores into one object (m[0..63] and m[64..127]) share one range check,
+; and since its bounds are monotone in the outer loop too, the check is placed
+; before the outer loop: one TTT pair for the whole nest.
+define void @nest(ptr noalias %m, float %a) {
+; CHECK-LABEL: nest:
+; CHECK:       ttt
+; CHECK:       ttt
+; CHECK:       #589824
+; CHECK:       This Loop Header: Depth=1
+; CHECK-NOT:   ttt
+; CHECK-NOT:   strt
+entry:
+  br label %outer
+outer:
+  %i = phi i32 [ 0, %entry ], [ %i.next, %outer.latch ]
+  %row = mul nuw nsw i32 %i, 8
+  br label %inner
+inner:
+  %j = phi i32 [ 0, %outer ], [ %j.next, %inner ]
+  %k = add nuw nsw i32 %row, %j
+  %p = getelementptr inbounds float, ptr %m, i32 %k
+  store float %a, ptr %p
+  %k2 = add nuw nsw i32 %k, 64
+  %q = getelementptr inbounds float, ptr %m, i32 %k2
+  store float %a, ptr %q
+  %j.next = add nuw nsw i32 %j, 1
+  %je = icmp eq i32 %j.next, 8
+  br i1 %je, label %outer.latch, label %inner
+outer.latch:
+  %i.next = add nuw nsw i32 %i, 1
+  %ie = icmp eq i32 %i.next, 8
+  br i1 %ie, label %exit, label %outer
+exit:
+  ret void
+}
+
 ; Integer stores are left to ordinary store hardening (this pass is FP-only):
 ; no range check, and the store becomes an unprivileged STRT.
 define void @iadd(ptr noalias %y, ptr noalias %x, i32 %n) {

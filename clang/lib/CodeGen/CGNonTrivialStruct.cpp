@@ -269,6 +269,11 @@ struct GenBinaryFuncName : CopyStructVisitor<GenBinaryFuncName<IsMove>, IsMove>,
 
   void visitPtrAuth(QualType FT, const FieldDecl *FD,
                     CharUnits CurStructOffset) {
+    if (FT->isPalisadeProtectedPointerType()) {
+      CharUnits FieldOffset = CurStructOffset + this->getFieldOffset(FD);
+      this->appendStr("_pp" + llvm::to_string(FieldOffset.getQuantity()));
+      return;
+    }
     this->appendStr("_pa");
     PointerAuthQualifier PtrAuth = FT.getPointerAuth().withoutKeyNone();
     this->appendStr(llvm::to_string(PtrAuth.getKey()) + "_");
@@ -388,7 +393,7 @@ template <class Derived> struct GenFuncBase {
     llvm::PHINode *PHIs[N];
 
     for (unsigned I = 0; I < N; ++I) {
-      PHIs[I] = CGF.Builder.CreatePHI(CGF.CGM.Int8PtrPtrTy, 2, "addr.cur");
+      PHIs[I] = CGF.Builder.CreatePHI(StartAddrs[I].getType(), 2, "addr.cur");
       PHIs[I]->addIncoming(StartAddrs[I].emitRawPointer(CGF), PreheaderBB);
     }
 
@@ -583,9 +588,18 @@ struct GenBinaryFunc : CopyStructVisitor<Derived, IsMove>,
   }
   void visitPtrAuth(QualType FT, const FieldDecl *FD, CharUnits CurStackOffset,
                     std::array<Address, 2> Addrs) {
-    PointerAuthQualifier PtrAuth = FT.getPointerAuth().withoutKeyNone();
     Addrs[DstIdx] = this->getAddrWithOffset(Addrs[DstIdx], CurStackOffset, FD);
     Addrs[SrcIdx] = this->getAddrWithOffset(Addrs[SrcIdx], CurStackOffset, FD);
+    // Copy a protected pointer with a typed load and store, so its PAC is
+    // checked at the source and bound to the destination.
+    if (FT->isPalisadeProtectedPointerType()) {
+      llvm::Value *Val = this->CGF->EmitLoadOfScalar(
+          Addrs[SrcIdx], FT.isVolatileQualified(), FT, SourceLocation());
+      this->CGF->EmitStoreOfScalar(
+          Val, this->CGF->MakeAddrLValue(Addrs[DstIdx], FT), true);
+      return;
+    }
+    PointerAuthQualifier PtrAuth = FT.getPointerAuth().withoutKeyNone();
     this->CGF->EmitPointerAuthCopy(PtrAuth, FT, Addrs[DstIdx], Addrs[SrcIdx]);
   }
 };
@@ -847,6 +861,11 @@ static void callSpecialFunction(G &&Gen, StringRef FuncName, QualType QT,
   for (unsigned I = 0; I < N; ++I)
     Addrs[I] = Addrs[I].withElementType(CGF.CGM.Int8PtrTy);
   QT = IsVolatile ? QT.withVolatile() : QT;
+  if (CGF.getLangOpts().Palisade) {
+    Gen.setCGF(&CGF);
+    Gen.visitStructFields(QT, CharUnits::Zero(), Addrs);
+    return;
+  }
   Gen.callFunc(FuncName, QT, Addrs, CGF);
 }
 

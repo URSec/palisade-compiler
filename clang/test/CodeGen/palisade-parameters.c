@@ -42,6 +42,43 @@ void consume_large(__protected struct large *p);
 // CHECK: call void @consume_large(ptr addrspace(200) {{.*}}[[OBJECT]])
 void large_parameter(__protected struct large value) { consume_large(&value); }
 
+struct pointer_record { __protected int *pointer; int value; };
+void consume_pointer_record(struct pointer_record value);
+void consume_pointer_records(__protected struct pointer_record *p);
+
+// Registers would drop the PAC, so a record holding a protected pointer is
+// passed through memory. The caller fills the copy field by field.
+// CHECK-LABEL: define{{.*}} void @pass_pointer_record(
+// CHECK: [[COPY:%.*]] = alloca %struct.pointer_record
+// CHECK: [[P:%.*]] = load ptr addrspace(200), ptr
+// CHECK: store ptr addrspace(200) [[P]], ptr [[COPY]]
+// CHECK: call void @consume_pointer_record(ptr {{.*}}[[COPY]])
+void pass_pointer_record(struct pointer_record *p) {
+  consume_pointer_record(*p);
+}
+
+// The PAC is checked before the pointer enters protected storage.
+// CHECK-LABEL: define{{.*}} void @protected_pointer_record(ptr noundef
+// CHECK: [[OBJECT:%.*]] = alloca %struct.pointer_record, align {{[0-9]+}}, addrspace(200)
+// CHECK: [[P:%.*]] = load ptr addrspace(200), ptr %{{.*}}
+// CHECK: store ptr addrspace(200) [[P]], ptr addrspace(200) [[OBJECT]]
+// CHECK: call void @consume_pointer_records(ptr addrspace(200) {{.*}}[[OBJECT]])
+void protected_pointer_record(__protected struct pointer_record value) {
+  consume_pointer_records(&value);
+}
+
+// va_arg reads the record through the address the caller passed.
+// ARM-LABEL: define{{.*}} i32 @variadic_pointer_record(
+// ARM: [[ADDR:%.*]] = load ptr, ptr %argp.cur
+// ARM: load ptr addrspace(200), ptr [[ADDR]]
+int variadic_pointer_record(int count, ...) {
+  __builtin_va_list ap;
+  __builtin_va_start(ap, count);
+  struct pointer_record value = __builtin_va_arg(ap, struct pointer_record);
+  __builtin_va_end(ap);
+  return *value.pointer;
+}
+
 // Ordinary aggregate parameters continue to use ordinary storage.
 // CHECK-LABEL: define{{.*}} i32 @ordinary_parameter(
 // CHECK-NOT: addrspace(200)

@@ -196,10 +196,35 @@ void zero_initialize(void) {
   consume(array);
 }
 
+// A record copy moves each protected pointer with a typed load and store, so
+// its PAC is checked at the source and bound to the destination. The other
+// fields are copied as bytes.
 // O0-LABEL: define{{.*}} void @copy_aggregate(
+// O0: [[P:%.*]] = load ptr addrspace(200), ptr %{{[0-9]+}}
+// O0: store ptr addrspace(200) [[P]], ptr addrspace(200) %{{.*}}
 // O0: call void @llvm.memcpy.p200.p0.i{{32|64}}(ptr addrspace(200)
+// O0: [[Q:%.*]] = load ptr addrspace(200), ptr addrspace(200) %{{.*}}
+// O0: store ptr addrspace(200) [[Q]], ptr %{{.*}}
 // O0: call void @llvm.memcpy.p0.p200.i{{32|64}}(ptr {{.*}}, ptr addrspace(200)
 void copy_aggregate(__protected struct record *dst, struct record *src) {
   *dst = *src;
   *src = *dst;
+}
+
+struct pointer_array { __protected int *pointers[2]; };
+union pointer_union { __protected int *pointer; int value; };
+
+// Arrays of protected pointers are copied element by element. Unions are out
+// of scope and still copied as bytes.
+// O0-LABEL: define{{.*}} void @copy_pointer_array(
+// O0: phi ptr addrspace(200) [
+// O0-NEXT: phi ptr [
+// O0: [[P:%.*]] = load ptr addrspace(200), ptr %addr.cur
+// O0: store ptr addrspace(200) [[P]], ptr addrspace(200) %addr.cur
+// O0: call void @llvm.memcpy.p0.p0.i{{32|64}}(
+void copy_pointer_array(__protected struct pointer_array *dst,
+                        struct pointer_array *src, union pointer_union *a,
+                        union pointer_union *b) {
+  *dst = *src;
+  *a = *b;
 }

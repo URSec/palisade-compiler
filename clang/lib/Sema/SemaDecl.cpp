@@ -13583,6 +13583,20 @@ bool shouldIgnoreForRecordTriviality(const FieldDecl *FD) {
   return FD->hasAttr<UnavailableAttr>();
 }
 
+/// Whether a field holds a protected pointer, directly or in an array or a
+/// nested record.
+bool containsProtectedPointer(const ASTContext &Context, QualType T) {
+  T = Context.getBaseElementType(T);
+  if (T->isPalisadeProtectedPointerType())
+    return true;
+  if (const RecordDecl *RD = T->getAsRecordDecl())
+    if ((RD = RD->getDefinition()))
+      return llvm::any_of(RD->fields(), [&](const FieldDecl *FD) {
+        return containsProtectedPointer(Context, FD->getType());
+      });
+  return false;
+}
+
 struct DiagNonTrivalCUnionDefaultInitializeVisitor
     : DefaultInitializedTypeVisitor<DiagNonTrivalCUnionDefaultInitializeVisitor,
                                     void> {
@@ -20209,6 +20223,12 @@ void Sema::ActOnFields(Scope *S, SourceLocation RecLoc, Decl *EnclosingDecl,
           Record->setHasNonTrivialToPrimitiveDefaultInitializeCUnion(true);
       }
       QualType::PrimitiveCopyKind PCK = FT.isNonTrivialToPrimitiveCopy();
+      // Palisade leaves unions out of scope: a union holding a protected
+      // pointer is still copied byte by byte.
+      bool HoldsProtectedPointer =
+          getLangOpts().Palisade && containsProtectedPointer(Context, FT);
+      if (Record->isUnion() && HoldsProtectedPointer)
+        PCK = QualType::PCK_Trivial;
       if (PCK != QualType::PCK_Trivial && PCK != QualType::PCK_VolatileTrivial) {
         Record->setNonTrivialToPrimitiveCopy(true);
         if (FT.hasNonTrivialToPrimitiveCopyCUnion() || Record->isUnion())
@@ -20237,6 +20257,11 @@ void Sema::ActOnFields(Scope *S, SourceLocation RecLoc, Decl *EnclosingDecl,
             RecordArgPassingKind::CanNeverPassInRegs);
         Record->setNonTrivialToPrimitiveCopy(true);
       }
+      // Registers would drop the PAC of a protected pointer, so a record
+      // holding one is passed through memory.
+      if (HoldsProtectedPointer)
+        Record->setArgPassingRestrictions(
+            RecordArgPassingKind::CanNeverPassInRegs);
     }
 
     if (Record && FD->getType().isVolatileQualified())

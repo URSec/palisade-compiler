@@ -3502,12 +3502,21 @@ void CodeGenFunction::EmitFunctionProlog(const CGFunctionInfo &FI,
           //
           // FIXME: We should have a common utility for generating an aggregate
           // copy.
+          //
+          // Palisade protected pointers needds to be copied by field, so
+          // each PAC is checked.
           CharUnits Size = getContext().getTypeSizeInChars(Ty);
-          Builder.CreateMemCpy(
-              AlignedTemp.getPointer(), AlignedTemp.getAlignment().getAsAlign(),
-              ParamAddr.emitRawPointer(*this),
-              ParamAddr.getAlignment().getAsAlign(),
-              llvm::ConstantInt::get(IntPtrTy, Size.getQuantity()));
+          if (NeedsProtectedCopy &&
+              Ty.isNonTrivialToPrimitiveCopy() == QualType::PCK_Struct)
+            callCStructCopyConstructor(MakeAddrLValue(AlignedTemp, Ty),
+                                       MakeAddrLValue(ParamAddr, Ty));
+          else
+            Builder.CreateMemCpy(
+                AlignedTemp.getPointer(),
+                AlignedTemp.getAlignment().getAsAlign(),
+                ParamAddr.emitRawPointer(*this),
+                ParamAddr.getAlignment().getAsAlign(),
+                llvm::ConstantInt::get(IntPtrTy, Size.getQuantity()));
           ParamAddr = AlignedTemp;
         }
         ArgVals.push_back(ParamValue::forIndirect(ParamAddr));

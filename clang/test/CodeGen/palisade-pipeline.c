@@ -1,6 +1,7 @@
 // REQUIRES: arm-registered-target
 // RUN: %clang --target=thumbv8.1m.main-none-eabi -mcpu=cortex-m85 -fpalisade -O2 -S %s -o - | FileCheck %s
 // RUN: %clang --target=thumbv8.1m.main-none-eabi -mcpu=cortex-m85 -fpalisade -O0 -S %s -o - | FileCheck %s --check-prefix=O0
+// RUN: %clang --target=thumbv8.1m.main-none-eabi -mcpu=cortex-m85 -fpalisade-pac -O2 -S %s -o - | FileCheck %s --check-prefix=PAC
 
 // -O0 runs no Palisade pass.
 // O0-NOT: strt
@@ -29,6 +30,18 @@ void domains(int *p, __protected int *q, int value) {
   *p = value;
   *q = value;
 }
+
+// Only -fpalisade-pac signs a protected pointer stored to ordinary memory.
+// CHECK-LABEL: keep:
+// CHECK:      strt r0, [r1]
+// CHECK-NEXT: bx lr
+// PAC-LABEL:  keep:
+// PAC:        pacg r2, r0, r1
+// PAC-NEXT:   strt r0, [r1]
+// PAC-NEXT:   strt r2, [r1, #4]
+// PAC-NEXT:   bx lr
+__protected int *ordinary_ptr;
+void keep(__protected int *p) { ordinary_ptr = p; }
 
 // Protected globals move to Palisade sections.
 // CHECK:      .section .data.palisade,"aw",%progbits

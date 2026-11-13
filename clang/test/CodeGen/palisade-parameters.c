@@ -1,5 +1,5 @@
-// RUN: %clang_cc1 -triple thumbv8.1m.main-none-eabi -fpalisade -std=c11 -emit-llvm -o - %s | FileCheck %s --check-prefixes=CHECK,ARM --enable-var-scope --implicit-check-not=addrspacecast
-// RUN: %clang_cc1 -triple x86_64-unknown-linux-gnu -fpalisade -std=c11 -emit-llvm -o - %s | FileCheck %s --check-prefixes=CHECK,X86 --enable-var-scope --implicit-check-not=addrspacecast
+// RUN: %clang_cc1 -triple thumbv8.1m.main-none-eabi -fpalisade-pac -std=c11 -emit-llvm -o - %s | FileCheck %s --check-prefixes=CHECK,ARM --enable-var-scope --implicit-check-not=addrspacecast
+// RUN: %clang_cc1 -triple x86_64-unknown-linux-gnu -fpalisade-pac -std=c11 -emit-llvm -o - %s | FileCheck %s --check-prefixes=CHECK,X86 --enable-var-scope --implicit-check-not=addrspacecast
 
 // A top-level parameter qualifier controls its local storage, not its ABI.
 void consume(__protected int *p);

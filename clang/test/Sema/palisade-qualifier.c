@@ -1,6 +1,6 @@
-// RUN: %clang_cc1 -triple thumbv8.1m.main-none-eabi -fpalisade -std=c11 -fsyntax-only -ferror-limit 0 -verify %s
-// RUN: %clang_cc1 -triple x86_64-unknown-linux-gnu -fpalisade -std=c11 -fsyntax-only -ferror-limit 0 -verify %s
-// RUN: %clang_cc1 -triple thumbv8.1m.main-none-eabi -fpalisade -std=c23 -fsyntax-only -ferror-limit 0 -verify %s
+// RUN: %clang_cc1 -triple thumbv8.1m.main-none-eabi -fpalisade-pac -std=c11 -fsyntax-only -ferror-limit 0 -verify %s
+// RUN: %clang_cc1 -triple x86_64-unknown-linux-gnu -fpalisade-pac -std=c11 -fsyntax-only -ferror-limit 0 -verify %s
+// RUN: %clang_cc1 -triple thumbv8.1m.main-none-eabi -fpalisade-pac -std=c23 -fsyntax-only -ferror-limit 0 -verify %s
 
 // Type identity, propagation and the existing address-space diagnostics.
 // Palisade's rules for casts, function pointers, comparisons and return types.

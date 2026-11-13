@@ -2660,8 +2660,9 @@ public:
   bool isFunctionNoProtoType() const { return getAs<FunctionNoProtoType>(); }
   bool isFunctionProtoType() const { return getAs<FunctionProtoType>(); }
   bool isPointerType() const;
-  /// Whether this is a pointer to Palisade protected storage. Such pointer
-  /// is fat and followed by a 32-bit word for its PAC: {ptr, pac}.
+  /// Whether this is a pointer to Palisade protected storage. Under
+  /// -fpalisade-pac such pointer is fat and followed by a 32-bit word for its
+  /// PAC: {ptr, pac}.
   bool isPalisadeProtectedPointerType() const;
   bool isPointerOrReferenceType() const;
   bool isSignableType(const ASTContext &Ctx) const;

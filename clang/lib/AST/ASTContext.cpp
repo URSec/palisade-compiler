@@ -2475,7 +2475,7 @@ TypeInfo ASTContext::getTypeInfoImpl(const Type *T) const {
     Width = Target->getPointerWidth(AS);
     Align = Target->getPointerAlign(AS);
     // Widen the pointer to protected region in palisade
-    if (AS == LangAS::palisade_protected)
+    if (AS == LangAS::palisade_protected && getLangOpts().PalisadePAC)
       Width = llvm::alignTo(Width + 32, Align);
     break;
   case Type::MemberPointer: {

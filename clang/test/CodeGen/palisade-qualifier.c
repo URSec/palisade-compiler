@@ -1,7 +1,7 @@
-// RUN: %clang_cc1 -triple thumbv8.1m.main-none-eabi -fpalisade -std=c11 -emit-llvm -o - %s | FileCheck %s --check-prefixes=CHECK,O0 --enable-var-scope --implicit-check-not=addrspacecast
-// RUN: %clang_cc1 -triple x86_64-unknown-linux-gnu -fpalisade -std=c11 -emit-llvm -o - %s | FileCheck %s --check-prefixes=CHECK,O0 --enable-var-scope --implicit-check-not=addrspacecast
-// RUN: %clang_cc1 -triple thumbv8.1m.main-none-eabi -fpalisade -std=c11 -O2 -emit-llvm -o - %s | FileCheck %s --check-prefixes=CHECK,OPT --enable-var-scope --implicit-check-not=addrspacecast
-// RUN: %clang_cc1 -triple x86_64-unknown-linux-gnu -fpalisade -std=c11 -O2 -emit-llvm -o - %s | FileCheck %s --check-prefixes=CHECK,OPT --enable-var-scope --implicit-check-not=addrspacecast
+// RUN: %clang_cc1 -triple thumbv8.1m.main-none-eabi -fpalisade-pac -std=c11 -emit-llvm -o - %s | FileCheck %s --check-prefixes=CHECK,O0 --enable-var-scope --implicit-check-not=addrspacecast
+// RUN: %clang_cc1 -triple x86_64-unknown-linux-gnu -fpalisade-pac -std=c11 -emit-llvm -o - %s | FileCheck %s --check-prefixes=CHECK,O0 --enable-var-scope --implicit-check-not=addrspacecast
+// RUN: %clang_cc1 -triple thumbv8.1m.main-none-eabi -fpalisade-pac -std=c11 -O2 -emit-llvm -o - %s | FileCheck %s --check-prefixes=CHECK,OPT --enable-var-scope --implicit-check-not=addrspacecast
+// RUN: %clang_cc1 -triple x86_64-unknown-linux-gnu -fpalisade-pac -std=c11 -O2 -emit-llvm -o - %s | FileCheck %s --check-prefixes=CHECK,OPT --enable-var-scope --implicit-check-not=addrspacecast
 
 // Address space 200 identifies protected storage. Pointer values and the
 // objects holding those pointers have independent address spaces. In memory,
@@ -37,8 +37,8 @@ __protected int *literal = &(__protected int){11};
 // CHECK-LABEL: define{{.*}} void @write_through_pointers(
 // CHECK: [[P:%.*]] = load ptr, ptr @p
 // CHECK: store i32 1, ptr [[P]]
-// CHECK: [[Q:%.*]] = load ptr addrspace(200), ptr @q
-// CHECK: store i32 2, ptr addrspace(200) [[Q]]
+// CHECK: load ptr addrspace(200), ptr @q
+// CHECK: store i32 2, ptr addrspace(200) %{{.*}}
 // CHECK: [[R:%.*]] = load ptr, ptr addrspace(200) @r
 // CHECK: store i32 3, ptr [[R]]
 // CHECK: [[T:%.*]] = load ptr addrspace(200), ptr addrspace(200) @t
@@ -62,8 +62,8 @@ __protected int *static_storage(void) {
 }
 
 // CHECK-LABEL: define{{.*}} i32 @nested_pointer(
-// CHECK: [[P:%.*]] = load ptr addrspace(200), ptr %{{.*}}
-// CHECK: load i32, ptr addrspace(200) [[P]]
+// CHECK: load ptr addrspace(200), ptr %{{.*}}
+// CHECK: load i32, ptr addrspace(200) %{{.*}}
 int nested_pointer(__protected int **p) { return **p; }
 
 // CHECK-LABEL: define{{.*}} ptr addrspace(200) @element(ptr addrspace(200)

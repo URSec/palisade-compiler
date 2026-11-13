@@ -39,6 +39,7 @@
 
 // FIXME: A lot of the Benign options should be Compatible instead.
 LANGOPT(Palisade, 1, 0, NotCompatible, "Palisade-C protected storage qualifier")
+LANGOPT(PalisadePAC, 1, 0, NotCompatible, "Palisade pointer authentication for pointers to protected storage")
 LANGOPT(C99               , 1, 0, NotCompatible, "C99")
 LANGOPT(C11               , 1, 0, NotCompatible, "C11")
 LANGOPT(C17               , 1, 0, NotCompatible, "C17")

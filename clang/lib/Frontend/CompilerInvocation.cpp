@@ -4021,7 +4021,7 @@ bool CompilerInvocation::ParseLangArgs(LangOptions &Opts, ArgList &Args,
                                        DiagnosticsEngine &Diags) {
   unsigned NumErrorsBefore = Diags.getNumErrors();
 
-  if (Args.hasArg(OPT_fpalisade)) {
+  if (Args.hasArg(OPT_fpalisade, OPT_fpalisade_pac)) {
     // Palisade passes and store hardening only run in non-LTO builds.
     if (const Arg *A = Args.getLastArg(OPT_flto_EQ))
       Diags.Report(diag::err_drv_argument_not_allowed_with)

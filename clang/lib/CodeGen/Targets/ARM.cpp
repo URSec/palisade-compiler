@@ -813,8 +813,12 @@ RValue ARMABIInfo::EmitVAArg(CodeGenFunction &CGF, Address VAListAddr,
   if (TySize > CharUnits::fromQuantity(16) && isIllegalVectorType(Ty)) {
     IsIndirect = true;
 
-  // ARMv7k passes structs bigger than 16 bytes indirectly, in space
-  // allocated by the caller.
+    // A record that can never pass in registers is passed by address.
+  } else if (getRecordArgABI(Ty, getCXXABI()) == CGCXXABI::RAA_Indirect) {
+    IsIndirect = true;
+
+    // ARMv7k passes structs bigger than 16 bytes indirectly, in space
+    // allocated by the caller.
   } else if (TySize > CharUnits::fromQuantity(16) &&
              getABIKind() == ARMABIKind::AAPCS16_VFP &&
              !isHomogeneousAggregate(Ty, Base, Members)) {

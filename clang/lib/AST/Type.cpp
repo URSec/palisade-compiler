@@ -3105,6 +3105,12 @@ QualType::PrimitiveCopyKind QualType::isNonTrivialToPrimitiveCopy() const {
   default:
     if (hasAddressDiscriminatedPointerAuth())
       return PCK_PtrAuth;
+    // In ordinary memory, a protected pointer carries a PAC with
+    // address discriminated, and it should be non-trivial to copy.
+    if (getTypePtr()
+            ->getBaseElementTypeUnsafe()
+            ->isPalisadeProtectedPointerType())
+      return PCK_PtrAuth;
     return Qs.hasVolatile() ? PCK_VolatileTrivial : PCK_Trivial;
   }
 }

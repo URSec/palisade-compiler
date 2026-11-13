@@ -1563,7 +1563,8 @@ CodeGenFunction::EmitAutoVarAlloca(const VarDecl &D) {
     //
     // Initialize palisade protected pointer for each field {ptr, pac}.
     if (D.getInit() && (Ty->isArrayType() || Ty->isRecordType()) &&
-        !containsProtectedPointer(getContext(), Ty) &&
+        !(getLangOpts().PalisadePAC &&
+          containsProtectedPointer(getContext(), Ty)) &&
         (D.isConstexpr() ||
          ((Ty.isPODType(getContext()) ||
            getContext().getBaseElementType(Ty)->isObjCObjectPointerType()) &&
@@ -2060,7 +2061,8 @@ void CodeGenFunction::EmitAutoVarInit(const AutoVarEmission &emission) {
   llvm::Constant *constant = nullptr;
   if (emission.IsConstantAggregate ||
       (D.mightBeUsableInConstantExpressions(getContext()) &&
-       !containsProtectedPointer(getContext(), type))) {
+       !(getLangOpts().PalisadePAC &&
+         containsProtectedPointer(getContext(), type)))) {
     assert(!capturedByInit && "constant init contains a capturing block?");
     constant = ConstantEmitter(*this).tryEmitAbstractForInitializer(D);
     if (constant && !constant->isNullValue() &&

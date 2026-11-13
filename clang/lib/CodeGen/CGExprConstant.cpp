@@ -2059,7 +2059,8 @@ llvm::Constant *ConstantEmitter::emitForMemory(CodeGenModule &CGM,
   }
 
   // Initialize the PAC for protected to 0
-  if (destType->isPalisadeProtectedPointerType() && C->getType()->isPointerTy())
+  if (CGM.getLangOpts().PalisadePAC &&
+      destType->isPalisadeProtectedPointerType() && C->getType()->isPointerTy())
     return llvm::ConstantStruct::get(
         cast<llvm::StructType>(CGM.getTypes().ConvertTypeForMem(destType)),
         {C, llvm::ConstantInt::get(CGM.Int32Ty, 0)});

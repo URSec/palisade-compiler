@@ -163,7 +163,7 @@ llvm::Type *CodeGenTypes::ConvertTypeForMem(QualType T) {
                                   (unsigned)Context.getTypeSize(T));
 
   // A protected pointer is followed by its PAC word in memory.
-  if (T->isPalisadeProtectedPointerType())
+  if (Context.getLangOpts().PalisadePAC && T->isPalisadeProtectedPointerType())
     return llvm::StructType::get(R, llvm::Type::getInt32Ty(getLLVMContext()));
 
   // Else, don't map it.

@@ -20223,11 +20223,13 @@ void Sema::ActOnFields(Scope *S, SourceLocation RecLoc, Decl *EnclosingDecl,
           Record->setHasNonTrivialToPrimitiveDefaultInitializeCUnion(true);
       }
       QualType::PrimitiveCopyKind PCK = FT.isNonTrivialToPrimitiveCopy();
+      // A protected pointer is non-trivial to copy only when it carries a PAC.
       // Palisade leaves unions out of scope: a union holding a protected
       // pointer is still copied byte by byte.
+      bool HasPAC = getLangOpts().PalisadePAC;
       bool HoldsProtectedPointer =
           getLangOpts().Palisade && containsProtectedPointer(Context, FT);
-      if (Record->isUnion() && HoldsProtectedPointer)
+      if (HoldsProtectedPointer && (Record->isUnion() || !HasPAC))
         PCK = QualType::PCK_Trivial;
       if (PCK != QualType::PCK_Trivial && PCK != QualType::PCK_VolatileTrivial) {
         Record->setNonTrivialToPrimitiveCopy(true);
@@ -20259,7 +20261,7 @@ void Sema::ActOnFields(Scope *S, SourceLocation RecLoc, Decl *EnclosingDecl,
       }
       // Registers would drop the PAC of a protected pointer, so a record
       // holding one is passed through memory.
-      if (HoldsProtectedPointer)
+      if (HoldsProtectedPointer && HasPAC)
         Record->setArgPassingRestrictions(
             RecordArgPassingKind::CanNeverPassInRegs);
     }

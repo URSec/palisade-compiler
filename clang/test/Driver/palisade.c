@@ -5,6 +5,11 @@
 // RUN:   | FileCheck %s --check-prefix=FLAG
 // FLAG: "-fpalisade"
 
+/// -fpalisade-pac is forwarded as well, and implies -fpalisade in cc1.
+// RUN: %clang --target=armv8.1m.main-none-eabi -fpalisade-pac -### -c %s 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=PAC
+// PAC: "-fpalisade-pac"
+
 /// The feature is off by default
 // RUN: %clang --target=armv8.1m.main-none-eabi -### -c %s 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=OFF

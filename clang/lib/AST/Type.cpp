@@ -3106,7 +3106,8 @@ QualType::PrimitiveCopyKind QualType::isNonTrivialToPrimitiveCopy() const {
     if (hasAddressDiscriminatedPointerAuth())
       return PCK_PtrAuth;
     // In ordinary memory, a protected pointer carries a PAC with
-    // address discriminated, and it should be non-trivial to copy.
+    // address discriminated, and it should be non-trivial to copy. Sema
+    // keeps records trivial to copy when -fpalisade-pac is off.
     if (getTypePtr()
             ->getBaseElementTypeUnsafe()
             ->isPalisadeProtectedPointerType())

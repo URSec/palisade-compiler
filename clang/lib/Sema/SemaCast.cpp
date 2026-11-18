@@ -187,7 +187,7 @@ namespace {
     // Language specific cast restrictions for address spaces.
     void checkAddressSpaceCast(QualType SrcType, QualType DestType);
 
-    // Palisade restrictions on casts into protected storage.
+    // Palisade restrictions on casts across the protected storage boundary.
     void checkPalisadeCast(QualType SrcType, QualType DestType);
 
     void checkCastAlign() {
@@ -2736,10 +2736,10 @@ void CastOperation::checkAddressSpaceCast(QualType SrcType, QualType DestType) {
   }
 }
 
-// A cast can't make a pointer to protected storage from an ordinary pointer or
-// an integer, or change the signature of a function with pointers to protected
-// storage. Casting a protected pointer to an ordinary one is allowed, casting
-// to a null pointer constant is also allowed.
+// A cast can't convert between a pointer to protected storage and an ordinary
+// pointer at any level, make a pointer to protected storage from an integer,
+// or change the signature of a function with pointers to protected storage.
+// Casting a null pointer constant is allowed.
 void CastOperation::checkPalisadeCast(QualType SrcType, QualType DestType) {
   if (!Self.getLangOpts().Palisade ||
       SrcExpr.get()->isNullPointerConstant(Self.Context,
@@ -2769,8 +2769,8 @@ void CastOperation::checkPalisadeCast(QualType SrcType, QualType DestType) {
   while (isa<PointerType>(DestPtr) && isa<PointerType>(SrcPtr)) {
     QualType DestPointee = cast<PointerType>(DestPtr)->getPointeeType();
     QualType SrcPointee = cast<PointerType>(SrcPtr)->getPointeeType();
-    if (DestPointee.getAddressSpace() == LangAS::palisade_protected &&
-        SrcPointee.getAddressSpace() != LangAS::palisade_protected) {
+    if ((DestPointee.getAddressSpace() == LangAS::palisade_protected) !=
+        (SrcPointee.getAddressSpace() == LangAS::palisade_protected)) {
       Self.Diag(OpRange.getBegin(),
                 Nested ? diag::err_typecheck_incompatible_nested_address_space
                        : diag::err_typecheck_incompatible_address_space)

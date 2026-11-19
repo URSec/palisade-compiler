@@ -155,19 +155,19 @@ void void_conversions(__protected int *p, __protected void *v, void *ordinary) {
   v = ordinary; // expected-error {{changes address space of pointer}}
 }
 
-// Casts can't make a pointer to protected storage from an ordinary pointer or
-// an integer, at any level. Casting out of protected storage and casting a
-// null pointer constant stay valid.
+// casts can't convert between protection domain at any level, casting a
+// null pointer constant stays valid.
 void casts(int *ordinary, __protected int *p, int **ordinary_slot,
            int *__protected *slot, __UINTPTR_TYPE__ address) {
-  (void)(int *)p;
-  (void)(int **)&p;
   (void)(__protected void *)p;
   (void)(__protected int *)0;
   (void)(__protected int *)(void *)0;
   (void)(__protected int *)ordinary; // expected-error {{casting 'int *' to type '__protected int *' changes address space of pointer}}
+  (void)(int *)p; // expected-error {{casting '__protected int *' to type 'int *' changes address space of pointer}}
   (void)(__protected int **)ordinary_slot; // expected-error {{changes address space of nested pointer}}
+  (void)(int **)&p; // expected-error {{changes address space of nested pointer}}
   (void)(__protected int *__protected *)slot; // expected-error {{changes address space of nested pointer}}
+  (void)(int **)slot; // expected-error {{changes address space of pointer}}
   (void)(__protected int *)address; // expected-error {{cannot cast integer type}}
   (void)(__protected int *)0x20001000; // expected-error {{cannot cast integer type 'int' to pointer to protected storage '__protected int *'}}
 }

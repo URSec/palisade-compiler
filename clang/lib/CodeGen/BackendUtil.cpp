@@ -83,6 +83,7 @@
 #include "llvm/Transforms/Instrumentation/NumericalStabilitySanitizer.h"
 #include "llvm/Transforms/Instrumentation/PGOInstrumentation.h"
 #include "llvm/Transforms/Instrumentation/PalisadeGlobalSegregation.h"
+#include "llvm/Transforms/Instrumentation/PalisadeInlineCopy.h"
 #include "llvm/Transforms/Instrumentation/PalisadeLocalPromote.h"
 #include "llvm/Transforms/Instrumentation/PalisadePointerAuth.h"
 #include "llvm/Transforms/Instrumentation/PalisadeStackSplit.h"
@@ -1161,11 +1162,14 @@ void EmitAssemblyHelper::RunOptimizationPipeline(
     MPM.addPass(HipStdParAllocationInterpositionPass());
 
   // Run after optimization and postopt bitcode linking, so local promotion and
-  // stack split see the final set of locals. Pointer authentication runs after
-  // local promotion, which decides the locals that stay in ordinary memory; it
-  // emits ARM intrinsics, so it only runs for ARM targets.
+  // stack split see the final set of locals. Copies into protected storage are
+  // expanded inline after local promotion to avoid library calls. Pointer
+  // authentication runs after local promotion, which decides the locals that
+  // stay in ordinary memory; it emits ARM intrinsics, so it only runs for ARM
+  // targets.
   if (shouldRunPalisade(LangOpts, CodeGenOpts)) {
     MPM.addPass(createModuleToFunctionPassAdaptor(PalisadeLocalPromotePass()));
+    MPM.addPass(createModuleToFunctionPassAdaptor(PalisadeInlineCopyPass()));
     if (LangOpts.PalisadePAC &&
         (TargetTriple.isARM() || TargetTriple.isThumb()))
       MPM.addPass(PalisadePointerAuthPass());

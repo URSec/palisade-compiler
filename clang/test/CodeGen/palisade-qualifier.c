@@ -189,7 +189,8 @@ void compound_literal(void) { consume(&(__protected int){3}); }
 // Bulk operations carry the source and destination storage domains in IR.
 // CHECK-LABEL: define{{.*}} void @zero_initialize(
 // CHECK: [[ARRAY:%.*]] = alloca [16 x i32], align {{[0-9]+}}, addrspace(200)
-// CHECK: call void @llvm.memset.p200.i{{32|64}}(ptr addrspace(200) {{.*}}[[ARRAY]]
+// O0: call void @llvm.memset.p200.i{{32|64}}(ptr addrspace(200) {{.*}}[[ARRAY]]
+// OPT: call void @llvm.memset.inline.p200.i{{32|64}}(ptr addrspace(200) {{.*}}[[ARRAY]]
 // CHECK: call void @consume(ptr addrspace(200)
 void zero_initialize(void) {
   __protected int array[16] = {0};

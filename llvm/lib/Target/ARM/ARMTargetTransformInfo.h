@@ -185,6 +185,11 @@ public:
 
   InstructionCost getMemcpyCost(const Instruction *I) const override;
 
+  Type *getMemcpyLoopLoweringType(
+      LLVMContext &Context, Value *Length, unsigned SrcAddrSpace,
+      unsigned DestAddrSpace, Align SrcAlign, Align DestAlign,
+      std::optional<uint32_t> AtomicElementSize) const override;
+
   uint64_t getMaxMemIntrinsicInlineSizeThreshold() const override {
     return ST->getMaxInlineSizeThreshold();
   }

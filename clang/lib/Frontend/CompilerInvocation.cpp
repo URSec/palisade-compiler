@@ -4026,8 +4026,9 @@ bool CompilerInvocation::ParseLangArgs(LangOptions &Opts, ArgList &Args,
     if (const Arg *A = Args.getLastArg(OPT_flto_EQ))
       Diags.Report(diag::err_drv_argument_not_allowed_with)
           << "-fpalisade" << A->getAsString(Args);
-    // palisade only works for C
-    if (IK.getLanguage() != Language::C)
+    // palisade only works for C for semantic analysis.
+    // palisade invocation supports CXX for hardening C library.
+    if (IK.getLanguage() != Language::C && IK.getLanguage() != Language::CXX)
       Diags.Report(diag::err_drv_argument_not_allowed_with)
           << "-fpalisade" << GetInputKindName(IK);
     // palisade only allow ARM 32

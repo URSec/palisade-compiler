@@ -276,6 +276,7 @@
 #include "llvm/Transforms/Instrumentation/PGOForceFunctionAttrs.h"
 #include "llvm/Transforms/Instrumentation/PGOInstrumentation.h"
 #include "llvm/Transforms/Instrumentation/PalisadeGlobalSegregation.h"
+#include "llvm/Transforms/Instrumentation/PalisadeInlineCopy.h"
 #include "llvm/Transforms/Instrumentation/PalisadeLocalPromote.h"
 #include "llvm/Transforms/Instrumentation/PalisadePointerAuth.h"
 #include "llvm/Transforms/Instrumentation/PalisadeStackSplit.h"

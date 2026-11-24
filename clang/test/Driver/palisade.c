@@ -15,10 +15,12 @@
 // RUN:   | FileCheck %s --check-prefix=OFF
 // OFF-NOT: "-fpalisade"
 
-/// The qualifier is a C only extension.
-// RUN: not %clang --target=armv8.1m.main-none-eabi -fpalisade -x c++ -fsyntax-only %s 2>&1 \
-// RUN:   | FileCheck %s --check-prefix=CXX
-// CXX: invalid argument '-fpalisade' not allowed with 'C++'
+/// C++ is accepted and only gets the hardening passes. The qualifier stays a
+/// C only extension, so `__protected` is an ordinary identifier in C++.
+// RUN: %clang --target=armv8.1m.main-none-eabi -fpalisade -x c++ -fsyntax-only -Xclang -verify %s
+// RUN: not %clang --target=armv8.1m.main-none-eabi -fpalisade -x objective-c -fsyntax-only %s 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=OBJC
+// OBJC: invalid argument '-fpalisade' not allowed with 'Objective-C'
 
 /// Accepted targets. Armv8.1-M, either arm or thumb
 /// For testing, X86 is also permitted
@@ -45,3 +47,6 @@
 // RUN: %clang --target=armv8.1m.main-none-eabi -fpalisade -fsyntax-only -Xclang -verify %s
 // expected-no-diagnostics
 int ordinary(void) { return 0; }
+#ifdef __cplusplus
+int __protected;
+#endif

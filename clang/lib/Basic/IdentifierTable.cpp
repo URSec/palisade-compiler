@@ -154,7 +154,8 @@ static KeywordStatus getKeywordStatusHelper(const LangOptions &LangOpts,
   case KEYHLSL:
     return LangOpts.HLSL ? KS_Enabled : KS_Unknown;
   case KEYPALISADE:
-    return LangOpts.Palisade ? KS_Enabled : KS_Unknown;
+    // The type rules are only defined for C.
+    return LangOpts.Palisade && !LangOpts.CPlusPlus ? KS_Enabled : KS_Unknown;
   case KEYNOCXX:
     // This is enabled in all non-C++ modes, but might be enabled for other
     // reasons as well.

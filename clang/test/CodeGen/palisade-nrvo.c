@@ -31,7 +31,9 @@ struct small protected_small(void) {
 // CHECK-LABEL: define{{.*}} void @protected_large(
 // CHECK-SAME: ptr {{.*}}sret(%struct.large) {{.*}}[[RESULT:%[^,) ]+]])
 // CHECK: [[LOCAL:%.*]] = alloca %struct.large, align {{[0-9]+}}, addrspace(200)
-// CHECK: call void @llvm.memset.p200.i{{32|64}}(ptr addrspace(200) {{.*}}[[LOCAL]], i8 0,
+// O0: call void @llvm.memset.p200.i{{32|64}}(ptr addrspace(200) {{.*}}[[LOCAL]], i8 0,
+// The optimized copy is inline: a loop on ARM, memset.inline on x86.
+// OPT: {{@llvm.memset.inline.p200.i64\(|getelementptr inbounds i8, }}ptr addrspace(200) {{.*}}[[LOCAL]]
 // CHECK: call void @consume_large(ptr addrspace(200) {{.*}}[[LOCAL]])
 // CHECK: call void @llvm.memcpy.p0.p200.i{{32|64}}(ptr {{.*}}[[RESULT]], ptr addrspace(200) {{.*}}[[LOCAL]], i{{32|64}} 128, i1 false)
 // CHECK: ret void

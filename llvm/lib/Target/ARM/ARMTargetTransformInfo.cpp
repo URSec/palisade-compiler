@@ -1214,6 +1214,20 @@ int ARMTTIImpl::getNumMemOps(const IntrinsicInst *I) const {
   return -1;
 }
 
+// Palisade expands copies into protected storage as inline store loop
+// for compiler issued copies instead of calling C library.
+Type *ARMTTIImpl::getMemcpyLoopLoweringType(
+    LLVMContext &Context, Value *Length, unsigned SrcAddrSpace,
+    unsigned DestAddrSpace, Align SrcAlign, Align DestAlign,
+    std::optional<uint32_t> AtomicElementSize) const {
+  if (DestAddrSpace == 200 && !AtomicElementSize &&
+      std::min(SrcAlign, DestAlign) >= Align(4))
+    return Type::getInt64Ty(Context);
+  return BaseT::getMemcpyLoopLoweringType(Context, Length, SrcAddrSpace,
+                                          DestAddrSpace, SrcAlign, DestAlign,
+                                          AtomicElementSize);
+}
+
 InstructionCost ARMTTIImpl::getMemcpyCost(const Instruction *I) const {
   int NumOps = getNumMemOps(cast<IntrinsicInst>(I));
 

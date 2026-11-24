@@ -43,6 +43,17 @@ void domains(int *p, __protected int *q, int value) {
 __protected int *ordinary_ptr;
 void keep(__protected int *p) { ordinary_ptr = p; }
 
+// A large copy into protected storage never calls the C library, whose stores
+// are unprivileged; it is a loop of privileged stores.
+// CHECK-LABEL: save:
+// CHECK-NOT:   {{bl|strt}}
+// CHECK:       ldrd
+// CHECK-NOT:   {{bl|strt}}
+// CHECK:       .fnend
+struct block { int words[64]; };
+__protected struct block saved;
+void save(struct block *b) { saved = *b; }
+
 // Protected globals move to Palisade sections.
 // CHECK:      .section .data.palisade,"aw",%progbits
 // CHECK:      protected_global:

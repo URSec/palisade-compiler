@@ -21,6 +21,7 @@ add_llvm_component_library(LLVMInstrumentation
   PGOInstrumentation.cpp
   PGOMemOPSizeOpt.cpp
   PalisadeGlobalSegregation.cpp
+  PalisadeInlineCopy.cpp
   PalisadeLocalPromote.cpp
   PalisadePointerAuth.cpp
   PalisadeStackSplit.cpp

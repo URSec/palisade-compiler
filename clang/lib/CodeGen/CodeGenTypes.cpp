@@ -162,8 +162,8 @@ llvm::Type *CodeGenTypes::ConvertTypeForMem(QualType T) {
     return llvm::IntegerType::get(getLLVMContext(),
                                   (unsigned)Context.getTypeSize(T));
 
-  // A protected pointer is followed by its PAC word in memory.
-  if (Context.getLangOpts().PalisadePAC && T->isPalisadeProtectedPointerType())
+  // A Palisade PAC pointer is followed by its PAC word in memory.
+  if (Context.getLangOpts().PalisadePAC && T->isPalisadePACPointerType())
     return llvm::StructType::get(R, llvm::Type::getInt32Ty(getLLVMContext()));
 
   // Else, don't map it.
@@ -190,8 +190,8 @@ llvm::Type *CodeGenTypes::convertTypeForLoadStore(QualType T,
     return llvm::Type::getIntNTy(
         getLLVMContext(), Context.getTypeSizeInChars(T).getQuantity() * 8);
 
-  // A protected pointer is loaded and stored without its PAC.
-  if (T->isPalisadeProtectedPointerType())
+  // A Palisade PAC pointer is loaded and stored without its PAC.
+  if (Context.getLangOpts().PalisadePAC && T->isPalisadePACPointerType())
     return ConvertType(T);
 
   if (LLVMTy->isIntegerTy(1))
@@ -631,6 +631,8 @@ llvm::Type *CodeGenTypes::ConvertType(QualType T) {
       break;
     }
     unsigned AS = getTargetAddressSpace(ETy);
+    if (Context.getLangOpts().PalisadePAC && ETy->isFunctionType())
+      AS = Context.getTargetAddressSpace(LangAS::palisade_protected);
     ResultType = llvm::PointerType::get(getLLVMContext(), AS);
     break;
   }

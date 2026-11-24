@@ -27,7 +27,7 @@ __protected int *literal = &(__protected int){11};
 // CHECK-DAG: @r = {{.*}}addrspace(200) global ptr @ordinary
 // CHECK-DAG: @t = {{.*}}addrspace(200) global { ptr addrspace(200), i32 } { ptr addrspace(200) @protected_value, i32 0 }
 // CHECK-DAG: @values = {{.*}}addrspace(200) global [4 x i32] zeroinitializer
-// CHECK-DAG: @callback = {{.*}}addrspace(200) global ptr null
+// CHECK-DAG: @callback = {{.*}}addrspace(200) global { ptr addrspace(200), i32 } zeroinitializer
 // CHECK-DAG: @.compoundliteral = internal addrspace(200) global i32 11
 // CHECK-DAG: @literal = {{.*}}global { ptr addrspace(200), i32 } { ptr addrspace(200) @.compoundliteral, i32 0 }
 // CHECK-DAG: @static_storage.value = internal addrspace(200) global i32 9
@@ -91,10 +91,12 @@ __protected void *protected_malloc(__SIZE_TYPE__ size);
 // CHECK: ret ptr addrspace(200)
 __protected int *allocate(void) { return protected_malloc(sizeof(int)); }
 
-// The callback object is protected, while its function address remains ordinary.
+// The callback object is protected; under -fpalisade-pac, function pointers
+// use address space 200 and cast back to the program address space on call.
 // CHECK-LABEL: define{{.*}} i32 @call_callback(
-// CHECK: [[FN:%.*]] = load ptr, ptr addrspace(200) @callback
-// CHECK: call i32 [[FN]]()
+// CHECK: [[FN:%.*]] = load ptr addrspace(200), ptr addrspace(200) @callback
+// CHECK: [[RAW:%.*]] = addrspacecast ptr addrspace(200) [[FN]] to ptr
+// CHECK: call i32 [[RAW]]()
 int call_callback(void) { return callback(); }
 
 struct record {

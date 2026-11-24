@@ -720,7 +720,11 @@ public:
     if (isa<MemberPointerType>(E->getType())) // never sugared
       return CGF.CGM.getMemberPointerConstant(E);
 
-    return EmitLValue(E->getSubExpr()).getPointer(CGF);
+    Value *V = EmitLValue(E->getSubExpr()).getPointer(CGF);
+    llvm::Type *DstTy = ConvertType(E->getType());
+    if (V->getType() != DstTy)
+      V = CGF.performAddrSpaceCast(V, DstTy);
+    return V;
   }
   Value *VisitUnaryDeref(const UnaryOperator *E) {
     if (E->getType()->isVoidType())
@@ -1894,8 +1898,8 @@ Value *ScalarExprEmitter::EmitComplexToScalarConversion(
 }
 
 Value *ScalarExprEmitter::EmitNullValue(QualType Ty) {
-  // Emit widen null constant for palisade protected pointer
-  if (Ty->isPalisadeProtectedPointerType())
+  // Emit widen null constant for Palisade PAC pointer
+  if (CGF.getLangOpts().PalisadePAC && Ty->isPalisadePACPointerType())
     return CGF.CGM.getNullPointer(cast<llvm::PointerType>(ConvertType(Ty)), Ty);
   return CGF.EmitFromMemory(CGF.CGM.EmitNullConstant(Ty), Ty);
 }
@@ -2922,8 +2926,13 @@ Value *ScalarExprEmitter::VisitCastExpr(CastExpr *CE) {
   case CK_ArrayToPointerDecay:
     return CGF.getAsNaturalPointerTo(CGF.EmitArrayToPointerDecay(E),
                                      CE->getType()->getPointeeType());
-  case CK_FunctionToPointerDecay:
-    return EmitLValue(E).getPointer(CGF);
+  case CK_FunctionToPointerDecay: {
+    Value *V = EmitLValue(E).getPointer(CGF);
+    llvm::Type *DstTy = ConvertType(DestTy);
+    if (V->getType() != DstTy)
+      V = CGF.performAddrSpaceCast(V, DstTy);
+    return V;
+  }
 
   case CK_NullToPointer:
     if (MustVisitNullValue(E))

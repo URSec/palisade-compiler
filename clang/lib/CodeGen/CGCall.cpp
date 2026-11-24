@@ -6106,6 +6106,12 @@ RValue CodeGenFunction::EmitCall(const CGFunctionInfo &CallInfo,
 
   const CGCallee &ConcreteCallee = Callee.prepareConcreteCallee(*this);
   llvm::Value *CalleePtr = ConcreteCallee.getFunctionPointer();
+  if (getLangOpts().PalisadePAC && CalleePtr->getType()->isPointerTy() &&
+      CalleePtr->getType()->getPointerAddressSpace() !=
+          CGM.getDataLayout().getProgramAddressSpace())
+    CalleePtr = performAddrSpaceCast(
+        CalleePtr,
+        Builder.getPtrTy(CGM.getDataLayout().getProgramAddressSpace()));
 
   // If we're using inalloca, set up that argument.
   if (ArgMemory.isValid()) {

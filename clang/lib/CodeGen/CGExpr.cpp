@@ -6619,6 +6619,13 @@ CGCallee CodeGenFunction::EmitCallee(const Expr *E) {
           CGM.getIntrinsic(llvm::Intrinsic::wasm_funcref_to_ptr);
       return Builder.CreateCall(ToPtr, {CalleePtr});
     }
+    if (getLangOpts().PalisadePAC && CalleePtr->getType()->isPointerTy() &&
+        CalleePtr->getType()->getPointerAddressSpace() !=
+            CGM.getDataLayout().getProgramAddressSpace()) {
+      return performAddrSpaceCast(
+          CalleePtr,
+          Builder.getPtrTy(CGM.getDataLayout().getProgramAddressSpace()));
+    }
     return CalleePtr;
   };
 

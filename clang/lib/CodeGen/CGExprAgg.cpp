@@ -1739,7 +1739,7 @@ void AggExprEmitter::EmitNullInitializationToLValue(LValue lv) {
     // For non-aggregates, we can store the appropriate null constant.
     // Null initialize widen for palisade rotected pointer.
     llvm::Value *null =
-        type->isPalisadeProtectedPointerType()
+        (CGF.getLangOpts().PalisadePAC && type->isPalisadePACPointerType())
             ? CGF.CGM.getNullPointer(
                   cast<llvm::PointerType>(CGF.ConvertType(type)), type)
             : CGF.CGM.EmitNullConstant(type);

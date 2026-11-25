@@ -1495,10 +1495,10 @@ static bool shouldExtendLifetime(const ASTContext &Context,
   return true;
 }
 
-/// Whether an array or record contains a protected pointer.
+/// Whether an array or record contains a Palisade PAC pointer.
 static bool containsProtectedPointer(const ASTContext &Context, QualType T) {
   T = Context.getBaseElementType(T);
-  if (T->isPalisadeProtectedPointerType())
+  if (T->isPalisadePACPointerType())
     return true;
   if (const RecordDecl *RD = T->getAsRecordDecl())
     if ((RD = RD->getDefinition()))

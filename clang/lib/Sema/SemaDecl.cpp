@@ -13583,16 +13583,19 @@ bool shouldIgnoreForRecordTriviality(const FieldDecl *FD) {
   return FD->hasAttr<UnavailableAttr>();
 }
 
-/// Whether a field holds a protected pointer, directly or in an array or a
-/// nested record.
-bool containsProtectedPointer(const ASTContext &Context, QualType T) {
+/// Whether a field holds a Palisade PAC pointer (a pointer to __protected
+/// storage or a function pointer), directly or in an array or a nested record.
+bool containsPalisadePACPointer(const ASTContext &Context, QualType T,
+                                bool IncludeFunctionPointers) {
   T = Context.getBaseElementType(T);
-  if (T->isPalisadeProtectedPointerType())
+  if (IncludeFunctionPointers ? T->isPalisadePACPointerType()
+                              : T->isPalisadeProtectedPointerType())
     return true;
   if (const RecordDecl *RD = T->getAsRecordDecl())
     if ((RD = RD->getDefinition()))
       return llvm::any_of(RD->fields(), [&](const FieldDecl *FD) {
-        return containsProtectedPointer(Context, FD->getType());
+        return containsPalisadePACPointer(Context, FD->getType(),
+                                          IncludeFunctionPointers);
       });
   return false;
 }
@@ -20223,12 +20226,22 @@ void Sema::ActOnFields(Scope *S, SourceLocation RecLoc, Decl *EnclosingDecl,
           Record->setHasNonTrivialToPrimitiveDefaultInitializeCUnion(true);
       }
       QualType::PrimitiveCopyKind PCK = FT.isNonTrivialToPrimitiveCopy();
-      // A protected pointer is non-trivial to copy only when it carries a PAC.
-      // Palisade leaves unions out of scope: a union holding a protected
-      // pointer is still copied byte by byte.
+      // A Palisade PAC pointer is non-trivial to copy only when -fpalisade-pac
+      // is enabled. Palisade leaves unions out of scope: a union holding one is
+      // still copied byte by byte.
       bool HasPAC = getLangOpts().PalisadePAC;
       bool HoldsProtectedPointer =
-          getLangOpts().Palisade && containsProtectedPointer(Context, FT);
+          getLangOpts().Palisade &&
+          containsPalisadePACPointer(Context, FT,
+                                     /*IncludeFunctionPointers=*/false);
+      bool HoldsPACPointer =
+          HasPAC && containsPalisadePACPointer(
+                        Context, FT, /*IncludeFunctionPointers=*/true);
+      if (HoldsPACPointer && !Record->isUnion() &&
+          (PCK == QualType::PCK_Trivial ||
+           PCK == QualType::PCK_VolatileTrivial) &&
+          FT->getBaseElementTypeUnsafe()->isFunctionPointerType())
+        PCK = QualType::PCK_PtrAuth;
       if (HoldsProtectedPointer && (Record->isUnion() || !HasPAC))
         PCK = QualType::PCK_Trivial;
       if (PCK != QualType::PCK_Trivial && PCK != QualType::PCK_VolatileTrivial) {
@@ -20259,9 +20272,9 @@ void Sema::ActOnFields(Scope *S, SourceLocation RecLoc, Decl *EnclosingDecl,
             RecordArgPassingKind::CanNeverPassInRegs);
         Record->setNonTrivialToPrimitiveCopy(true);
       }
-      // Registers would drop the PAC of a protected pointer, so a record
+      // Registers would drop the PAC of a Palisade PAC pointer, so a record
       // holding one is passed through memory.
-      if (HoldsProtectedPointer && HasPAC)
+      if (HoldsPACPointer)
         Record->setArgPassingRestrictions(
             RecordArgPassingKind::CanNeverPassInRegs);
     }

@@ -2664,6 +2664,9 @@ public:
   /// -fpalisade-pac such pointer is fat and followed by a 32-bit word for its
   /// PAC: {ptr, pac}.
   bool isPalisadeProtectedPointerType() const;
+  /// Whether this pointer carries a Palisade PAC under -fpalisade-pac:
+  /// either a pointer to __protected storage or a function pointer.
+  bool isPalisadePACPointerType() const;
   bool isPointerOrReferenceType() const;
   bool isSignableType(const ASTContext &Ctx) const;
   bool isSignablePointerType() const;
@@ -8693,6 +8696,10 @@ inline bool Type::isPalisadeProtectedPointerType() const {
   if (const auto *PT = dyn_cast<PointerType>(CanonicalType))
     return PT->getPointeeType().getAddressSpace() == LangAS::palisade_protected;
   return false;
+}
+
+inline bool Type::isPalisadePACPointerType() const {
+  return isPalisadeProtectedPointerType() || isFunctionPointerType();
 }
 
 inline bool Type::isPointerOrReferenceType() const {

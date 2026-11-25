@@ -83,6 +83,18 @@ struct CopyStructVisitor : StructVisitor<Derived>,
 
   CopyStructVisitor(ASTContext &Ctx) : StructVisitor<Derived>(Ctx) {}
 
+  template <class... Ts> void visit(QualType FT, Ts &&...Args) {
+    QualType::PrimitiveCopyKind PCK =
+        IsMove ? FT.isNonTrivialToPrimitiveDestructiveMove()
+               : FT.isNonTrivialToPrimitiveCopy();
+    if ((PCK == QualType::PCK_Trivial ||
+         PCK == QualType::PCK_VolatileTrivial) &&
+        asDerived().getContext().getLangOpts().PalisadePAC &&
+        FT->getBaseElementTypeUnsafe()->isFunctionPointerType())
+      PCK = QualType::PCK_PtrAuth;
+    asDerived().visitWithKind(PCK, FT, std::forward<Ts>(Args)...);
+  }
+
   template <class... Ts>
   void preVisit(QualType::PrimitiveCopyKind PCK, QualType FT,
                 const FieldDecl *FD, CharUnits CurStructOffset, Ts &&... Args) {
@@ -269,7 +281,7 @@ struct GenBinaryFuncName : CopyStructVisitor<GenBinaryFuncName<IsMove>, IsMove>,
 
   void visitPtrAuth(QualType FT, const FieldDecl *FD,
                     CharUnits CurStructOffset) {
-    if (FT->isPalisadeProtectedPointerType()) {
+    if (FT->isPalisadePACPointerType()) {
       CharUnits FieldOffset = CurStructOffset + this->getFieldOffset(FD);
       this->appendStr("_pp" + llvm::to_string(FieldOffset.getQuantity()));
       return;
@@ -590,9 +602,9 @@ struct GenBinaryFunc : CopyStructVisitor<Derived, IsMove>,
                     std::array<Address, 2> Addrs) {
     Addrs[DstIdx] = this->getAddrWithOffset(Addrs[DstIdx], CurStackOffset, FD);
     Addrs[SrcIdx] = this->getAddrWithOffset(Addrs[SrcIdx], CurStackOffset, FD);
-    // Copy a protected pointer with a typed load and store, so its PAC is
+    // Copy a Palisade PAC pointer with a typed load and store, so its PAC is
     // checked at the source and bound to the destination.
-    if (FT->isPalisadeProtectedPointerType()) {
+    if (FT->isPalisadePACPointerType()) {
       llvm::Value *Val = this->CGF->EmitLoadOfScalar(
           Addrs[SrcIdx], FT.isVolatileQualified(), FT, SourceLocation());
       this->CGF->EmitStoreOfScalar(
